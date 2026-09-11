@@ -9,5 +9,6 @@ import { ResidentsService } from './residents.service.js';
   imports: [UsersModule, ApartmentsModule],
   controllers: [ResidentsController],
   providers: [ResidentsService, ResidentsRepository],
+  exports: [ResidentsService],
 })
 export class ResidentsModule {}
