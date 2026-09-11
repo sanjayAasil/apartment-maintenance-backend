@@ -6,5 +6,6 @@ import { ApartmentsService } from './apartments.service.js';
 @Module({
   controllers: [ApartmentsController],
   providers: [ApartmentsService, ApartmentsRepository],
+  exports: [ApartmentsService],
 })
 export class ApartmentsModule {}
