@@ -14,15 +14,16 @@ enum UserRole {
 }
 
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
+  id           String      @id @default(uuid()) @db.Uuid
   name         String
-  email        String    @unique
+  email        String      @unique
   passwordHash String
   role         UserRole
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
   resident     Resident?
+  technician   Technician?
 
   @@index([role])
   @@index([isActive])
@@ -60,12 +61,41 @@ model Resident {
 }
 
 model MaintenanceCategory {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String   @unique
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String            @unique
+  description      String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  technicianSkills TechnicianSkill[]
 
   @@index([isActive])
+}
+
+model Technician {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @unique @db.Uuid
+  phone           String
+  experienceYears Int
+  isAvailable     Boolean           @default(true)
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  user            User              @relation(fields: [userId], references: [id])
+  skills          TechnicianSkill[]
+
+  @@index([isActive])
+  @@index([isAvailable])
+}
+
+model TechnicianSkill {
+  id           String              @id @default(uuid()) @db.Uuid
+  technicianId String              @db.Uuid
+  categoryId   String              @db.Uuid
+  createdAt    DateTime            @default(now())
+  technician   Technician          @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+  category     MaintenanceCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([technicianId, categoryId])
+  @@index([categoryId])
 }

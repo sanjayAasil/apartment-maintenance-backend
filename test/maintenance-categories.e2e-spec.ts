@@ -73,7 +73,7 @@ describe.sequential('Maintenance Categories API', () => {
 
   async function cleanup(): Promise<void> {
     await prisma.maintenanceCategory.deleteMany({
-      where: { name: { startsWith: 'E2E ', mode: 'insensitive' } },
+      where: { name: { in: ['E2E Plumbing', 'E2E Electrical'] } },
     });
     await prisma.user.deleteMany({
       where: { email: { in: [adminEmail, memberEmail] } },
@@ -116,7 +116,7 @@ describe.sequential('Maintenance Categories API', () => {
   it('allows resident and technician list/detail reads', async () => {
     const list = await request(app.getHttpServer())
       .get(
-        '/api/maintenance-categories?search=plumb&isActive=true&page=1&limit=20',
+        '/api/maintenance-categories?search=E2E%20Plumbing&isActive=true&page=1&limit=20',
       )
       .set('Authorization', `Bearer ${residentToken}`)
       .expect(200);
