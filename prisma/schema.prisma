@@ -58,3 +58,14 @@ model Resident {
   @@index([isActive])
   @@index([moveInDate])
 }
+
+model MaintenanceCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+}

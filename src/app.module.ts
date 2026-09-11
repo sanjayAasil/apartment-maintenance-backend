@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { ApartmentsModule } from './modules/apartments/apartments.module.js';
+import { MaintenanceCategoriesModule } from './modules/maintenance-categories/maintenance-categories.module.js';
 import { ResidentsModule } from './modules/residents/residents.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -28,6 +29,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     AuthModule,
     ApartmentsModule,
     ResidentsModule,
+    MaintenanceCategoriesModule,
   ],
 })
 export class AppModule {}
