@@ -38,6 +38,7 @@ export class MaintenanceRequestsRepository {
       categoryId,
       apartmentId,
       residentId,
+      technicianId,
       page,
       limit,
       sortBy,
@@ -49,6 +50,9 @@ export class MaintenanceRequestsRepository {
       categoryId,
       apartmentId,
       residentId,
+      ...(technicianId
+        ? { assignments: { some: { technicianId, isActive: true } } }
+        : {}),
       ...(search
         ? {
             OR: [

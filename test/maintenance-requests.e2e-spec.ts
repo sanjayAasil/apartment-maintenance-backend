@@ -14,6 +14,8 @@ describe.sequential('Maintenance Requests API', () => {
   const residentEmail = 'requests-resident-e2e@example.invalid';
   const otherResidentEmail = 'requests-other-resident-e2e@example.invalid';
   const technicianEmail = 'requests-technician-e2e@example.invalid';
+  const secondTechnicianEmail =
+    'requests-second-technician-e2e@example.invalid';
   const password = 'test-password';
   const block = 'REQ-E2E';
   const categoryName = 'E2E Request Plumbing';
@@ -23,11 +25,14 @@ describe.sequential('Maintenance Requests API', () => {
   let residentToken: string;
   let otherResidentToken: string;
   let technicianToken: string;
+  let secondTechnicianToken: string;
   let residentUserId: string;
   let apartmentId: string;
   let residentId: string;
   let categoryId: string;
   let maintenanceRequestId: string;
+  let technicianId: string;
+  let secondTechnicianId: string;
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -72,6 +77,15 @@ describe.sequential('Maintenance Requests API', () => {
       data: { role: UserRole.TECHNICIAN },
     });
     technicianToken = await login(technicianEmail);
+    const secondTechnicianRegistration = await register(
+      'Second Requests Technician E2E',
+      secondTechnicianEmail,
+    );
+    await prisma.user.update({
+      where: { id: secondTechnicianRegistration.user.id as string },
+      data: { role: UserRole.TECHNICIAN },
+    });
+    secondTechnicianToken = await login(secondTechnicianEmail);
 
     apartmentId = (
       await request(app.getHttpServer())
@@ -99,6 +113,35 @@ describe.sequential('Maintenance Requests API', () => {
         .send({ name: categoryName, description: 'Request test category' })
         .expect(201)
     ).body.id as string;
+    technicianId = (
+      await request(app.getHttpServer())
+        .post('/api/technicians')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          userId: technicianRegistration.user.id,
+          phone: '9000000001',
+          experienceYears: 3,
+        })
+        .expect(201)
+    ).body.id as string;
+    secondTechnicianId = (
+      await request(app.getHttpServer())
+        .post('/api/technicians')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          userId: secondTechnicianRegistration.user.id,
+          phone: '9000000002',
+          experienceYears: 5,
+        })
+        .expect(201)
+    ).body.id as string;
+    for (const id of [technicianId, secondTechnicianId]) {
+      await request(app.getHttpServer())
+        .post(`/api/technicians/${id}/skills`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ categoryId })
+        .expect(201);
+    }
   });
 
   afterAll(async () => {
@@ -123,6 +166,20 @@ describe.sequential('Maintenance Requests API', () => {
     ).body.accessToken as string;
   }
   async function cleanup(): Promise<void> {
+    await prisma.maintenanceAssignment.deleteMany({
+      where: {
+        OR: [
+          { maintenanceRequest: { category: { name: categoryName } } },
+          {
+            technician: {
+              user: {
+                email: { in: [technicianEmail, secondTechnicianEmail] },
+              },
+            },
+          },
+        ],
+      },
+    });
     await prisma.maintenanceRequest.deleteMany({
       where: {
         OR: [
@@ -138,6 +195,18 @@ describe.sequential('Maintenance Requests API', () => {
     await prisma.resident.deleteMany({
       where: { user: { email: { in: [residentEmail, otherResidentEmail] } } },
     });
+    await prisma.technicianSkill.deleteMany({
+      where: {
+        technician: {
+          user: { email: { in: [technicianEmail, secondTechnicianEmail] } },
+        },
+      },
+    });
+    await prisma.technician.deleteMany({
+      where: {
+        user: { email: { in: [technicianEmail, secondTechnicianEmail] } },
+      },
+    });
     await prisma.apartment.deleteMany({ where: { block } });
     await prisma.maintenanceCategory.deleteMany({
       where: { name: categoryName },
@@ -145,7 +214,13 @@ describe.sequential('Maintenance Requests API', () => {
     await prisma.user.deleteMany({
       where: {
         email: {
-          in: [adminEmail, residentEmail, otherResidentEmail, technicianEmail],
+          in: [
+            adminEmail,
+            residentEmail,
+            otherResidentEmail,
+            technicianEmail,
+            secondTechnicianEmail,
+          ],
         },
       },
     });
@@ -208,10 +283,11 @@ describe.sequential('Maintenance Requests API', () => {
     await request(app.getHttpServer())
       .get('/api/maintenance-requests')
       .set('Authorization', `Bearer ${technicianToken}`)
-      .expect(403);
+      .expect(200)
+      .expect((response) => expect(response.body.data).toHaveLength(0));
   });
 
-  it('updates an open request and rejects invalid transitions', async () => {
+  it('updates an open request and rejects direct assignment status changes', async () => {
     await request(app.getHttpServer())
       .patch(`/api/maintenance-requests/${maintenanceRequestId}`)
       .set('Authorization', `Bearer ${residentToken}`)
@@ -228,16 +304,97 @@ describe.sequential('Maintenance Requests API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: MaintenanceStatus.ASSIGNED })
       .expect(400);
+  });
+
+  it('assigns, unassigns, and preserves history transactionally', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ technicianId })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ technicianId })
+      .expect(409);
+    const current = await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/assignment`)
+      .set('Authorization', `Bearer ${residentToken}`)
+      .expect(200);
+    expect(current.body.technicianId).toBe(technicianId);
+
+    await request(app.getHttpServer())
+      .delete(`/api/maintenance-requests/${maintenanceRequestId}/assignment`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(204);
+    const openRequest = await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(openRequest.body.status).toBe(MaintenanceStatus.OPEN);
+    const history = await request(app.getHttpServer())
+      .get(
+        `/api/maintenance-requests/${maintenanceRequestId}/assignment-history`,
+      )
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(history.body).toHaveLength(1);
+    expect(history.body[0]).toMatchObject({ isActive: false });
+    expect(history.body[0].unassignedAt).not.toBeNull();
+  });
+
+  it('reassigns before work and gives only the active technician access', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ technicianId })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/maintenance-requests/${maintenanceRequestId}/assignment`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ technicianId: secondTechnicianId })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .expect(403);
+    const jobs = await request(app.getHttpServer())
+      .get('/api/maintenance-requests?page=1&limit=20')
+      .set('Authorization', `Bearer ${secondTechnicianToken}`)
+      .expect(200);
+    expect(jobs.body.data).toHaveLength(1);
+
+    const history = await request(app.getHttpServer())
+      .get(
+        `/api/maintenance-requests/${maintenanceRequestId}/assignment-history`,
+      )
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(history.body).toHaveLength(3);
+    expect(
+      history.body.filter((item: { isActive: boolean }) => item.isActive),
+    ).toHaveLength(1);
+  });
+
+  it('lets the assigned technician start and resolve, then the resident close', async () => {
     await request(app.getHttpServer())
       .patch(`/api/maintenance-requests/${maintenanceRequestId}/status`)
-      .set('Authorization', `Bearer ${residentToken}`)
-      .send({ status: MaintenanceStatus.CANCELLED })
+      .set('Authorization', `Bearer ${secondTechnicianToken}`)
+      .send({ status: MaintenanceStatus.IN_PROGRESS })
       .expect(200);
-    await request(app.getHttpServer())
-      .patch(`/api/maintenance-requests/${maintenanceRequestId}`)
+    const resolved = await request(app.getHttpServer())
+      .patch(`/api/maintenance-requests/${maintenanceRequestId}/status`)
+      .set('Authorization', `Bearer ${secondTechnicianToken}`)
+      .send({ status: MaintenanceStatus.RESOLVED })
+      .expect(200);
+    expect(resolved.body.resolvedAt).not.toBeNull();
+    const closed = await request(app.getHttpServer())
+      .patch(`/api/maintenance-requests/${maintenanceRequestId}/status`)
       .set('Authorization', `Bearer ${residentToken}`)
-      .send({ title: 'Cannot edit this now' })
-      .expect(400);
+      .send({ status: MaintenanceStatus.CLOSED })
+      .expect(200);
+    expect(closed.body.closedAt).not.toBeNull();
   });
 
   it('returns not found for an unknown request', () =>

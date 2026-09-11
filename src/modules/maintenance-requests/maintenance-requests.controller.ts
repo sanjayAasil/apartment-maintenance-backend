@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -20,6 +23,7 @@ import { UserRole } from '../../generated/prisma/enums.js';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import type { PublicUser } from '../users/users.types.js';
+import { AssignTechnicianDto } from './dto/assign-technician.dto.js';
 import { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
 import { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
 import { UpdateMaintenanceRequestStatusDto } from './dto/update-maintenance-request-status.dto.js';
@@ -46,7 +50,7 @@ export class MaintenanceRequestsController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.RESIDENT)
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
   @ApiOperation({ summary: 'List visible maintenance requests' })
   @ApiOkResponse({ description: 'Paginated maintenance request list' })
   list(
@@ -56,8 +60,56 @@ export class MaintenanceRequestsController {
     return this.service.list(query, user);
   }
 
+  @Post(':id/assign')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Assign a technician to an open request' })
+  @ApiCreatedResponse({ description: 'Technician assigned' })
+  assignTechnician(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: AssignTechnicianDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.assignTechnician(id, input.technicianId, user.id);
+  }
+
+  @Patch(':id/assignment')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Reassign a request before work starts' })
+  reassignTechnician(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: AssignTechnicianDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.reassignTechnician(id, input.technicianId, user.id);
+  }
+
+  @Delete(':id/assignment')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Unassign a request before work starts' })
+  unassignTechnician(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.service.unassignTechnician(id);
+  }
+
+  @Get(':id/assignment')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get the active request assignment' })
+  getCurrentAssignment(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getCurrentAssignment(id, user);
+  }
+
+  @Get(':id/assignment-history')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Get request assignment history' })
+  getAssignmentHistory(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.service.getAssignmentHistory(id);
+  }
+
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.RESIDENT)
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
   @ApiOperation({ summary: 'Get a visible maintenance request' })
   @ApiNotFoundResponse({ description: 'Maintenance request not found' })
   getById(
@@ -79,7 +131,7 @@ export class MaintenanceRequestsController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.ADMIN, UserRole.RESIDENT)
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
   @ApiOperation({
     summary: 'Apply an allowed maintenance request status transition',
   })

@@ -30,16 +30,17 @@ enum MaintenanceStatus {
 }
 
 model User {
-  id           String      @id @default(uuid()) @db.Uuid
-  name         String
-  email        String      @unique
-  passwordHash String
-  role         UserRole
-  isActive     Boolean     @default(true)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  resident     Resident?
-  technician   Technician?
+  id                 String                  @id @default(uuid()) @db.Uuid
+  name               String
+  email              String                  @unique
+  passwordHash       String
+  role               UserRole
+  isActive           Boolean                 @default(true)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  resident           Resident?
+  technician         Technician?
+  assignmentsCreated MaintenanceAssignment[] @relation("AssignmentCreator")
 
   @@index([role])
   @@index([isActive])
@@ -92,21 +93,22 @@ model MaintenanceCategory {
 }
 
 model MaintenanceRequest {
-  id          String              @id @default(uuid()) @db.Uuid
-  residentId  String              @db.Uuid
-  apartmentId String              @db.Uuid
-  categoryId  String              @db.Uuid
+  id          String                  @id @default(uuid()) @db.Uuid
+  residentId  String                  @db.Uuid
+  apartmentId String                  @db.Uuid
+  categoryId  String                  @db.Uuid
   title       String
   description String
   priority    MaintenancePriority
-  status      MaintenanceStatus   @default(OPEN)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  status      MaintenanceStatus       @default(OPEN)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
   resolvedAt  DateTime?
   closedAt    DateTime?
-  resident    Resident            @relation(fields: [residentId], references: [id])
-  apartment   Apartment           @relation(fields: [apartmentId], references: [id])
-  category    MaintenanceCategory @relation(fields: [categoryId], references: [id])
+  resident    Resident                @relation(fields: [residentId], references: [id])
+  apartment   Apartment               @relation(fields: [apartmentId], references: [id])
+  category    MaintenanceCategory     @relation(fields: [categoryId], references: [id])
+  assignments MaintenanceAssignment[]
 
   @@index([residentId])
   @@index([apartmentId])
@@ -117,19 +119,41 @@ model MaintenanceRequest {
 }
 
 model Technician {
-  id              String            @id @default(uuid()) @db.Uuid
-  userId          String            @unique @db.Uuid
+  id              String                  @id @default(uuid()) @db.Uuid
+  userId          String                  @unique @db.Uuid
   phone           String
   experienceYears Int
-  isAvailable     Boolean           @default(true)
-  isActive        Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  user            User              @relation(fields: [userId], references: [id])
+  isAvailable     Boolean                 @default(true)
+  isActive        Boolean                 @default(true)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  user            User                    @relation(fields: [userId], references: [id])
   skills          TechnicianSkill[]
+  assignments     MaintenanceAssignment[]
 
   @@index([isActive])
   @@index([isAvailable])
+}
+
+model MaintenanceAssignment {
+  id                   String             @id @default(uuid()) @db.Uuid
+  maintenanceRequestId String             @db.Uuid
+  technicianId         String             @db.Uuid
+  assignedByUserId     String             @db.Uuid
+  assignedAt           DateTime           @default(now())
+  unassignedAt         DateTime?
+  isActive             Boolean            @default(true)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  maintenanceRequest   MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id])
+  technician           Technician         @relation(fields: [technicianId], references: [id])
+  assignedBy           User               @relation("AssignmentCreator", fields: [assignedByUserId], references: [id])
+
+  @@index([maintenanceRequestId])
+  @@index([technicianId])
+  @@index([assignedByUserId])
+  @@index([isActive])
+  @@index([technicianId, isActive])
 }
 
 model TechnicianSkill {

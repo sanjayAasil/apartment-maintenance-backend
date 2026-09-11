@@ -3,6 +3,33 @@ import type {
   MaintenancePriority,
   MaintenanceStatus,
 } from '../../generated/prisma/enums.js';
+import { technicianSelect } from '../technicians/technicians.types.js';
+
+export const maintenanceAssignmentSelect = {
+  id: true,
+  maintenanceRequestId: true,
+  technicianId: true,
+  assignedByUserId: true,
+  assignedAt: true,
+  unassignedAt: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  technician: {
+    select: technicianSelect,
+  },
+  assignedBy: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+} satisfies Prisma.MaintenanceAssignmentSelect;
 
 export const maintenanceRequestSelect = {
   id: true,
@@ -56,11 +83,21 @@ export const maintenanceRequestSelect = {
       updatedAt: true,
     },
   },
+  assignments: {
+    where: { isActive: true },
+    select: maintenanceAssignmentSelect,
+    take: 1,
+  },
 } satisfies Prisma.MaintenanceRequestSelect;
 
 export type MaintenanceRequestWithRelations =
   Prisma.MaintenanceRequestGetPayload<{
     select: typeof maintenanceRequestSelect;
+  }>;
+
+export type MaintenanceAssignmentWithRelations =
+  Prisma.MaintenanceAssignmentGetPayload<{
+    select: typeof maintenanceAssignmentSelect;
   }>;
 
 export interface MaintenanceRequestFilters {
@@ -70,6 +107,7 @@ export interface MaintenanceRequestFilters {
   categoryId?: string;
   apartmentId?: string;
   residentId?: string;
+  technicianId?: string;
   page: number;
   limit: number;
   sortBy: 'createdAt' | 'updatedAt' | 'priority' | 'status';

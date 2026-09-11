@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,7 +11,9 @@ import {
 } from '../../generated/prisma/enums.js';
 import { MaintenanceCategoriesService } from '../maintenance-categories/maintenance-categories.service.js';
 import { ResidentsService } from '../residents/residents.service.js';
+import { TechniciansService } from '../technicians/technicians.service.js';
 import type { PublicUser } from '../users/users.types.js';
+import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
 import type { MaintenanceRequestWithRelations } from './maintenance-requests.types.js';
@@ -30,6 +33,13 @@ describe('MaintenanceRequestsService', () => {
     id: '22222222-2222-4222-8222-222222222222',
     email: 'admin@example.com',
     role: UserRole.ADMIN,
+  };
+  const technicianUser: PublicUser = {
+    ...residentUser,
+    id: '88888888-8888-4888-8888-888888888888',
+    name: 'Tara Technician',
+    email: 'tara@example.com',
+    role: UserRole.TECHNICIAN,
   };
   const resident = {
     id: '33333333-3333-4333-8333-333333333333',
@@ -80,6 +90,45 @@ describe('MaintenanceRequestsService', () => {
     },
     apartment: resident.apartment,
     category,
+    assignments: [],
+  };
+  const technician = {
+    id: '99999999-9999-4999-8999-999999999999',
+    userId: technicianUser.id,
+    phone: '9000000000',
+    experienceYears: 4,
+    isAvailable: true,
+    isActive: true,
+    createdAt: new Date('2026-01-01'),
+    updatedAt: new Date('2026-01-01'),
+    user: technicianUser,
+    skills: [
+      {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        technicianId: '99999999-9999-4999-8999-999999999999',
+        categoryId: category.id,
+        createdAt: new Date('2026-01-01'),
+        category: {
+          id: category.id,
+          name: category.name,
+          description: category.description,
+          isActive: true,
+        },
+      },
+    ],
+  };
+  const assignment = {
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    maintenanceRequestId: request.id,
+    technicianId: technician.id,
+    assignedByUserId: admin.id,
+    assignedAt: new Date('2026-09-02'),
+    unassignedAt: null,
+    isActive: true,
+    createdAt: new Date('2026-09-02'),
+    updatedAt: new Date('2026-09-02'),
+    technician,
+    assignedBy: admin,
   };
   const repository = {
     create: vi.fn(),
@@ -89,10 +138,20 @@ describe('MaintenanceRequestsService', () => {
   };
   const residentsService = { getByUserId: vi.fn() };
   const categoriesService = { getById: vi.fn() };
+  const techniciansService = { getById: vi.fn(), getByUserId: vi.fn() };
+  const assignmentsRepository = {
+    findActiveAssignment: vi.fn(),
+    findHistory: vi.fn(),
+    assign: vi.fn(),
+    reassign: vi.fn(),
+    unassign: vi.fn(),
+  };
   const service = new MaintenanceRequestsService(
     repository as unknown as MaintenanceRequestsRepository,
     residentsService as unknown as ResidentsService,
     categoriesService as unknown as MaintenanceCategoriesService,
+    techniciansService as unknown as TechniciansService,
+    assignmentsRepository as unknown as MaintenanceAssignmentsRepository,
   );
 
   beforeEach(() => vi.clearAllMocks());
@@ -294,6 +353,150 @@ describe('MaintenanceRequestsService', () => {
     expect(repository.update).toHaveBeenLastCalledWith(request.id, {
       status: MaintenanceStatus.CLOSED,
       closedAt: expect.any(Date),
+    });
+  });
+
+  it('assigns a matching active and available technician', async () => {
+    repository.findById.mockResolvedValue(request);
+    assignmentsRepository.findActiveAssignment.mockResolvedValue(null);
+    techniciansService.getById.mockResolvedValue(technician);
+    assignmentsRepository.assign.mockResolvedValue(assignment);
+    await expect(
+      service.assignTechnician(request.id, technician.id, admin.id),
+    ).resolves.toEqual(assignment);
+    expect(assignmentsRepository.assign).toHaveBeenCalledWith(
+      request.id,
+      technician.id,
+      admin.id,
+    );
+  });
+
+  it('rejects duplicate assignments and invalid technician eligibility', async () => {
+    repository.findById.mockResolvedValue(request);
+    assignmentsRepository.findActiveAssignment.mockResolvedValueOnce(
+      assignment,
+    );
+    await expect(
+      service.assignTechnician(request.id, technician.id, admin.id),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    for (const invalid of [
+      { ...technician, isActive: false },
+      { ...technician, isAvailable: false },
+      { ...technician, user: { ...technician.user, isActive: false } },
+      { ...technician, skills: [] },
+    ]) {
+      assignmentsRepository.findActiveAssignment.mockResolvedValueOnce(null);
+      techniciansService.getById.mockResolvedValueOnce(invalid);
+      await expect(
+        service.assignTechnician(request.id, technician.id, admin.id),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('reassigns before work starts and preserves assignment history', async () => {
+    const assignedRequest = {
+      ...request,
+      status: MaintenanceStatus.ASSIGNED,
+      assignments: [assignment],
+    };
+    const newTechnician = { ...technician, id: 'new-technician-id' };
+    const newAssignment = {
+      ...assignment,
+      id: 'new-assignment-id',
+      technicianId: newTechnician.id,
+    };
+    repository.findById.mockResolvedValue(assignedRequest);
+    assignmentsRepository.findActiveAssignment.mockResolvedValue(assignment);
+    techniciansService.getById.mockResolvedValue(newTechnician);
+    assignmentsRepository.reassign.mockResolvedValue(newAssignment);
+    await expect(
+      service.reassignTechnician(request.id, newTechnician.id, admin.id),
+    ).resolves.toEqual(newAssignment);
+    expect(assignmentsRepository.reassign).toHaveBeenCalledWith(
+      assignment.id,
+      request.id,
+      newTechnician.id,
+      admin.id,
+      expect.any(Date),
+    );
+    assignmentsRepository.findHistory.mockResolvedValue([
+      newAssignment,
+      { ...assignment, isActive: false, unassignedAt: new Date() },
+    ]);
+    await expect(
+      service.getAssignmentHistory(request.id),
+    ).resolves.toHaveLength(2);
+  });
+
+  it('unassigns an assigned request through the transactional repository', async () => {
+    repository.findById.mockResolvedValue({
+      ...request,
+      status: MaintenanceStatus.ASSIGNED,
+      assignments: [assignment],
+    });
+    assignmentsRepository.findActiveAssignment.mockResolvedValue(assignment);
+    await service.unassignTechnician(request.id);
+    expect(assignmentsRepository.unassign).toHaveBeenCalledWith(
+      assignment.id,
+      request.id,
+      expect.any(Date),
+    );
+  });
+
+  it('scopes technician lists and lets only the active assignee start and resolve', async () => {
+    techniciansService.getByUserId.mockResolvedValue(technician);
+    repository.findMany.mockResolvedValue({
+      data: [],
+      meta: { page: 1, limit: 20, total: 0 },
+    });
+    await service.list(
+      {
+        page: 1,
+        limit: 20,
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+      },
+      technicianUser,
+    );
+    expect(repository.findMany).toHaveBeenCalledWith({
+      page: 1,
+      limit: 20,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+      residentId: undefined,
+      technicianId: technician.id,
+      search: undefined,
+    });
+
+    repository.findById.mockResolvedValueOnce({
+      ...request,
+      status: MaintenanceStatus.ASSIGNED,
+      assignments: [assignment],
+    });
+    repository.update.mockResolvedValue(request);
+    await service.updateStatus(
+      request.id,
+      MaintenanceStatus.IN_PROGRESS,
+      technicianUser,
+    );
+    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
+      status: MaintenanceStatus.IN_PROGRESS,
+    });
+
+    repository.findById.mockResolvedValueOnce({
+      ...request,
+      status: MaintenanceStatus.IN_PROGRESS,
+      assignments: [assignment],
+    });
+    await service.updateStatus(
+      request.id,
+      MaintenanceStatus.RESOLVED,
+      technicianUser,
+    );
+    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
+      status: MaintenanceStatus.RESOLVED,
+      resolvedAt: expect.any(Date),
     });
   });
 
