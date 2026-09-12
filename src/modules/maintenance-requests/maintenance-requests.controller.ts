@@ -24,11 +24,14 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import type { PublicUser } from '../users/users.types.js';
 import { AssignTechnicianDto } from './dto/assign-technician.dto.js';
+import { AddMaintenanceRequestPartDto } from './dto/add-maintenance-request-part.dto.js';
 import { CreateMaintenanceCommentDto } from './dto/create-maintenance-comment.dto.js';
 import { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
+import { CreateMaintenanceWorkNoteDto } from './dto/create-maintenance-work-note.dto.js';
 import { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
 import { UpdateMaintenanceRequestStatusDto } from './dto/update-maintenance-request-status.dto.js';
 import { UpdateMaintenanceRequestDto } from './dto/update-maintenance-request.dto.js';
+import { UpdateMaintenanceWorkNoteDto } from './dto/update-maintenance-work-note.dto.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
 
 @ApiTags('maintenance-requests')
@@ -142,6 +145,75 @@ export class MaintenanceRequestsController {
     @CurrentUser() user: PublicUser,
   ) {
     return this.service.getHistory(id, user);
+  }
+
+  @Post(':id/work-notes')
+  @Roles(UserRole.TECHNICIAN)
+  createWorkNote(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: CreateMaintenanceWorkNoteDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.createWorkNote(id, input, user);
+  }
+
+  @Get(':id/work-notes')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  getWorkNote(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getWorkNote(id, user);
+  }
+
+  @Patch(':id/work-notes/:noteId')
+  @Roles(UserRole.TECHNICIAN)
+  updateWorkNote(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('noteId', new ParseUUIDPipe()) noteId: string,
+    @Body() input: UpdateMaintenanceWorkNoteDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.updateWorkNote(id, noteId, input, user);
+  }
+
+  @Post(':id/parts')
+  @Roles(UserRole.TECHNICIAN)
+  addPart(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: AddMaintenanceRequestPartDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.addPart(id, input.partId, input.quantity, user);
+  }
+
+  @Get(':id/parts')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  getParts(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getParts(id, user);
+  }
+
+  @Delete(':id/parts/:usageId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  removePart(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('usageId', new ParseUUIDPipe()) usageId: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.removePart(id, usageId, user);
+  }
+
+  @Get(':id/cost')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  getCost(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getCost(id, user);
   }
 
   @Get(':id')

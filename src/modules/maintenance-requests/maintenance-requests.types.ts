@@ -58,6 +58,45 @@ export const maintenanceHistorySelect = {
   },
 } satisfies Prisma.MaintenanceHistorySelect;
 
+export const maintenanceWorkNoteSelect = {
+  id: true,
+  maintenanceRequestId: true,
+  technicianId: true,
+  diagnosis: true,
+  workPerformed: true,
+  laborCost: true,
+  otherCost: true,
+  createdAt: true,
+  updatedAt: true,
+  technician: {
+    select: {
+      id: true,
+      userId: true,
+      user: { select: { id: true, name: true, role: true } },
+    },
+  },
+} satisfies Prisma.MaintenanceWorkNoteSelect;
+
+export const maintenanceRequestPartSelect = {
+  id: true,
+  maintenanceRequestId: true,
+  partId: true,
+  quantity: true,
+  unitPrice: true,
+  createdAt: true,
+  part: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      quantity: true,
+      unitPrice: true,
+      minimumStock: true,
+      isActive: true,
+    },
+  },
+} satisfies Prisma.MaintenanceRequestPartSelect;
+
 export const maintenanceRequestSelect = {
   id: true,
   residentId: true,
@@ -134,6 +173,23 @@ export type MaintenanceCommentWithAuthor = Prisma.MaintenanceCommentGetPayload<{
 export type MaintenanceHistoryWithActor = Prisma.MaintenanceHistoryGetPayload<{
   select: typeof maintenanceHistorySelect;
 }>;
+
+export type MaintenanceWorkNoteWithTechnician =
+  Prisma.MaintenanceWorkNoteGetPayload<{
+    select: typeof maintenanceWorkNoteSelect;
+  }>;
+
+export type MaintenanceRequestPartWithPart =
+  Prisma.MaintenanceRequestPartGetPayload<{
+    select: typeof maintenanceRequestPartSelect;
+  }>;
+
+export interface MaintenanceRequestCost {
+  partsCost: number;
+  laborCost: number;
+  otherCost: number;
+  totalCost: number;
+}
 
 export interface MaintenanceHistoryEvent {
   action: MaintenanceHistoryAction;

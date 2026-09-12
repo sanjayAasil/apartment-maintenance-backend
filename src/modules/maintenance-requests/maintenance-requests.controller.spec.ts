@@ -20,6 +20,9 @@ describe('MaintenanceRequestsController authorization', () => {
     'addComment',
     'getComments',
     'getHistory',
+    'getWorkNote',
+    'getParts',
+    'getCost',
   ] as const)('allows admins, residents, and technicians on %s', (method) => {
     expect(
       Reflect.getMetadata(
@@ -27,6 +30,27 @@ describe('MaintenanceRequestsController authorization', () => {
         MaintenanceRequestsController.prototype[method],
       ),
     ).toEqual([UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN]);
+  });
+
+  it.each(['createWorkNote', 'updateWorkNote', 'addPart'] as const)(
+    'restricts %s to technicians',
+    (method) => {
+      expect(
+        Reflect.getMetadata(
+          ROLES_KEY,
+          MaintenanceRequestsController.prototype[method],
+        ),
+      ).toEqual([UserRole.TECHNICIAN]);
+    },
+  );
+
+  it('allows admins and technicians to correct part usage', () => {
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        MaintenanceRequestsController.prototype.removePart,
+      ),
+    ).toEqual([UserRole.ADMIN, UserRole.TECHNICIAN]);
   });
 
   it('keeps detail editing restricted to admins and residents', () => {

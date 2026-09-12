@@ -4,6 +4,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { ApartmentsModule } from './modules/apartments/apartments.module.js';
 import { MaintenanceCategoriesModule } from './modules/maintenance-categories/maintenance-categories.module.js';
 import { MaintenanceRequestsModule } from './modules/maintenance-requests/maintenance-requests.module.js';
+import { PartsModule } from './modules/parts/parts.module.js';
 import { ResidentsModule } from './modules/residents/residents.module.js';
 import { TechniciansModule } from './modules/technicians/technicians.module.js';
 import { UsersModule } from './modules/users/users.module.js';
@@ -33,6 +34,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     ResidentsModule,
     MaintenanceCategoriesModule,
     MaintenanceRequestsModule,
+    PartsModule,
     TechniciansModule,
   ],
 })

@@ -10,7 +10,9 @@ import {
   MaintenanceStatus,
   UserRole,
 } from '../../generated/prisma/enums.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { MaintenanceCategoriesService } from '../maintenance-categories/maintenance-categories.service.js';
+import { PartsService } from '../parts/parts.service.js';
 import { ResidentsService } from '../residents/residents.service.js';
 import { TechniciansService } from '../technicians/technicians.service.js';
 import type { PublicUser } from '../users/users.types.js';
@@ -19,6 +21,7 @@ import { MaintenanceCommentsRepository } from './maintenance-comments.repository
 import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
+import { MaintenanceWorkRepository } from './maintenance-work.repository.js';
 import type { MaintenanceRequestWithRelations } from './maintenance-requests.types.js';
 
 describe('MaintenanceRequestsService', () => {
@@ -157,6 +160,17 @@ describe('MaintenanceRequestsService', () => {
     create: vi.fn(),
     findByRequestId: vi.fn(),
   };
+  const workRepository = {
+    findWorkNote: vi.fn(),
+    createWorkNote: vi.fn(),
+    updateWorkNote: vi.fn(),
+    findParts: vi.fn(),
+    findPartUsage: vi.fn(),
+    addPart: vi.fn(),
+    removePart: vi.fn(),
+    getCost: vi.fn(),
+  };
+  const partsService = { getById: vi.fn() };
   const service = new MaintenanceRequestsService(
     repository as unknown as MaintenanceRequestsRepository,
     residentsService as unknown as ResidentsService,
@@ -165,6 +179,8 @@ describe('MaintenanceRequestsService', () => {
     assignmentsRepository as unknown as MaintenanceAssignmentsRepository,
     commentsRepository as unknown as MaintenanceCommentsRepository,
     historyRepository as unknown as MaintenanceHistoryRepository,
+    workRepository as unknown as MaintenanceWorkRepository,
+    partsService as unknown as PartsService,
   );
 
   beforeEach(() => vi.clearAllMocks());
@@ -705,5 +721,162 @@ describe('MaintenanceRequestsService', () => {
     await expect(service.getHistory(request.id, admin)).resolves.toEqual([
       entry,
     ]);
+  });
+
+  it('lets the active technician create and update the work note in progress', async () => {
+    const inProgress = {
+      ...request,
+      status: MaintenanceStatus.IN_PROGRESS,
+      assignments: [assignment],
+    };
+    const note = {
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      maintenanceRequestId: request.id,
+      technicianId: technician.id,
+      diagnosis: 'Damaged valve',
+      workPerformed: 'Replaced valve',
+      laborCost: new Prisma.Decimal(300),
+      otherCost: new Prisma.Decimal(100),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      technician: {
+        id: technician.id,
+        userId: technicianUser.id,
+        user: {
+          id: technicianUser.id,
+          name: technicianUser.name,
+          role: technicianUser.role,
+        },
+      },
+    };
+    repository.findById.mockResolvedValue(inProgress);
+    workRepository.findWorkNote.mockResolvedValueOnce(null);
+    workRepository.createWorkNote.mockResolvedValue(note);
+    await expect(
+      service.createWorkNote(
+        request.id,
+        {
+          diagnosis: ' Damaged valve ',
+          workPerformed: ' Replaced valve ',
+          laborCost: 300,
+          otherCost: 100,
+        },
+        technicianUser,
+      ),
+    ).resolves.toEqual(note);
+    expect(workRepository.createWorkNote).toHaveBeenCalledWith(
+      request.id,
+      technician.id,
+      technicianUser.id,
+      expect.objectContaining({
+        diagnosis: 'Damaged valve',
+        workPerformed: 'Replaced valve',
+      }),
+    );
+
+    workRepository.findWorkNote.mockResolvedValueOnce(note);
+    workRepository.updateWorkNote.mockResolvedValue(note);
+    await service.updateWorkNote(
+      request.id,
+      note.id,
+      { diagnosis: 'Updated diagnosis' },
+      technicianUser,
+    );
+    expect(workRepository.updateWorkNote).toHaveBeenCalled();
+  });
+
+  it('rejects work changes by unassigned technicians or wrong statuses', async () => {
+    repository.findById.mockResolvedValue(request);
+    await expect(
+      service.createWorkNote(
+        request.id,
+        {
+          diagnosis: 'Diagnosis',
+          workPerformed: 'Repair',
+          laborCost: 0,
+          otherCost: 0,
+        },
+        technicianUser,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    repository.findById.mockResolvedValue({
+      ...request,
+      status: MaintenanceStatus.IN_PROGRESS,
+      assignments: [],
+    });
+    await expect(
+      service.addPart(request.id, 'part-id', 1, technicianUser),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('adds a priced part and returns the calculated request cost', async () => {
+    repository.findById.mockResolvedValue({
+      ...request,
+      status: MaintenanceStatus.IN_PROGRESS,
+      assignments: [assignment],
+    });
+    const part = {
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      name: 'Water Valve',
+      description: null,
+      quantity: 3,
+      unitPrice: new Prisma.Decimal(250),
+      minimumStock: 1,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    partsService.getById.mockResolvedValue(part);
+    workRepository.addPart.mockResolvedValue({ id: 'usage-id' });
+    await service.addPart(request.id, part.id, 2, technicianUser);
+    expect(workRepository.addPart).toHaveBeenCalledWith(
+      request.id,
+      part.id,
+      2,
+      part.unitPrice,
+      part.name,
+      technicianUser.id,
+    );
+    workRepository.getCost.mockResolvedValue({
+      partsCost: 500,
+      laborCost: 300,
+      otherCost: 100,
+      totalCost: 900,
+    });
+    repository.findById.mockResolvedValue(request);
+    await expect(service.getCost(request.id, admin)).resolves.toEqual({
+      partsCost: 500,
+      laborCost: 300,
+      otherCost: 100,
+      totalCost: 900,
+    });
+  });
+
+  it('rejects insufficient or inactive stock', async () => {
+    repository.findById.mockResolvedValue({
+      ...request,
+      status: MaintenanceStatus.IN_PROGRESS,
+      assignments: [assignment],
+    });
+    partsService.getById.mockResolvedValue({
+      id: 'part-id',
+      name: 'Valve',
+      isActive: true,
+      quantity: 1,
+      unitPrice: new Prisma.Decimal(10),
+    });
+    await expect(
+      service.addPart(request.id, 'part-id', 2, technicianUser),
+    ).rejects.toBeInstanceOf(ConflictException);
+    partsService.getById.mockResolvedValue({
+      id: 'part-id',
+      name: 'Valve',
+      isActive: false,
+      quantity: 10,
+      unitPrice: new Prisma.Decimal(10),
+    });
+    await expect(
+      service.addPart(request.id, 'part-id', 1, technicianUser),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

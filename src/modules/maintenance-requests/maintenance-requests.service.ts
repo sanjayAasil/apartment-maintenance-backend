@@ -12,23 +12,33 @@ import {
   UserRole,
 } from '../../generated/prisma/enums.js';
 import { MaintenanceCategoriesService } from '../maintenance-categories/maintenance-categories.service.js';
+import { PartsService } from '../parts/parts.service.js';
 import { ResidentsService } from '../residents/residents.service.js';
 import { TechniciansService } from '../technicians/technicians.service.js';
 import type { TechnicianWithRelations } from '../technicians/technicians.types.js';
 import type { PublicUser } from '../users/users.types.js';
 import type { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
+import type { CreateMaintenanceWorkNoteDto } from './dto/create-maintenance-work-note.dto.js';
 import type { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
+import type { UpdateMaintenanceWorkNoteDto } from './dto/update-maintenance-work-note.dto.js';
 import type { UpdateMaintenanceRequestDto } from './dto/update-maintenance-request.dto.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
 import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
 import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
+import {
+  InsufficientStockError,
+  MaintenanceWorkRepository,
+} from './maintenance-work.repository.js';
 import type {
   MaintenanceRequestWithRelations,
   MaintenanceAssignmentWithRelations,
   MaintenanceCommentWithAuthor,
   MaintenanceHistoryEvent,
   MaintenanceHistoryWithActor,
+  MaintenanceRequestCost,
+  MaintenanceRequestPartWithPart,
+  MaintenanceWorkNoteWithTechnician,
   PaginatedMaintenanceRequests,
 } from './maintenance-requests.types.js';
 
@@ -57,6 +67,8 @@ export class MaintenanceRequestsService {
     private readonly assignmentsRepository: MaintenanceAssignmentsRepository,
     private readonly commentsRepository: MaintenanceCommentsRepository,
     private readonly historyRepository: MaintenanceHistoryRepository,
+    private readonly workRepository: MaintenanceWorkRepository,
+    private readonly partsService: PartsService,
   ) {}
 
   async create(
@@ -429,6 +441,159 @@ export class MaintenanceRequestsService {
     return this.historyRepository.findByRequestId(id);
   }
 
+  async getWorkNote(
+    id: string,
+    user: PublicUser,
+  ): Promise<MaintenanceWorkNoteWithTechnician | null> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    this.assertCanReadRepairDetails(request, user);
+    return this.workRepository.findWorkNote(id);
+  }
+
+  async createWorkNote(
+    id: string,
+    input: CreateMaintenanceWorkNoteDto,
+    user: PublicUser,
+  ): Promise<MaintenanceWorkNoteWithTechnician> {
+    const request = await this.findOrThrow(id);
+    const technicianId = this.assertTechnicianCanEditWork(request, user);
+    if (await this.workRepository.findWorkNote(id)) {
+      throw new ConflictException(
+        'A work note already exists for this request',
+      );
+    }
+    try {
+      return await this.workRepository.createWorkNote(
+        id,
+        technicianId,
+        user.id,
+        {
+          diagnosis: input.diagnosis.trim(),
+          workPerformed: input.workPerformed.trim(),
+          laborCost: new Prisma.Decimal(input.laborCost),
+          otherCost: new Prisma.Decimal(input.otherCost),
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'A work note already exists for this request',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async updateWorkNote(
+    id: string,
+    noteId: string,
+    input: UpdateMaintenanceWorkNoteDto,
+    user: PublicUser,
+  ): Promise<MaintenanceWorkNoteWithTechnician> {
+    if (Object.keys(input).length === 0) {
+      throw new BadRequestException('At least one field must be provided');
+    }
+    const request = await this.findOrThrow(id);
+    this.assertTechnicianCanEditWork(request, user);
+    const note = await this.workRepository.findWorkNote(id);
+    if (!note || note.id !== noteId) {
+      throw new NotFoundException('Maintenance work note not found');
+    }
+    return this.workRepository.updateWorkNote(noteId, id, user.id, {
+      ...(input.diagnosis !== undefined
+        ? { diagnosis: input.diagnosis.trim() }
+        : {}),
+      ...(input.workPerformed !== undefined
+        ? { workPerformed: input.workPerformed.trim() }
+        : {}),
+      ...(input.laborCost !== undefined
+        ? { laborCost: new Prisma.Decimal(input.laborCost) }
+        : {}),
+      ...(input.otherCost !== undefined
+        ? { otherCost: new Prisma.Decimal(input.otherCost) }
+        : {}),
+    });
+  }
+
+  async getParts(
+    id: string,
+    user: PublicUser,
+  ): Promise<MaintenanceRequestPartWithPart[]> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    this.assertCanReadRepairDetails(request, user);
+    return this.workRepository.findParts(id);
+  }
+
+  async addPart(
+    id: string,
+    partId: string,
+    quantity: number,
+    user: PublicUser,
+  ): Promise<MaintenanceRequestPartWithPart> {
+    const request = await this.findOrThrow(id);
+    this.assertTechnicianCanEditWork(request, user);
+    const part = await this.partsService.getById(partId);
+    if (!part.isActive) throw new BadRequestException('Part must be active');
+    if (part.quantity < quantity) {
+      throw new ConflictException(
+        `Only ${part.quantity} units are currently available`,
+      );
+    }
+    try {
+      return await this.workRepository.addPart(
+        id,
+        partId,
+        quantity,
+        part.unitPrice,
+        part.name,
+        user.id,
+      );
+    } catch (error) {
+      if (error instanceof InsufficientStockError) {
+        const current = await this.partsService.getById(partId);
+        throw new ConflictException(
+          `Only ${current.quantity} units are currently available`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async removePart(
+    id: string,
+    usageId: string,
+    user: PublicUser,
+  ): Promise<void> {
+    const request = await this.findOrThrow(id);
+    if (request.status !== MaintenanceStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        'Parts can only be corrected while work is in progress',
+      );
+    }
+    if (user.role === UserRole.TECHNICIAN) {
+      this.assertTechnicianCanEditWork(request, user);
+    } else if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('You cannot remove part usage');
+    }
+    const usage = await this.workRepository.findPartUsage(usageId);
+    if (!usage || usage.maintenanceRequestId !== id) {
+      throw new NotFoundException('Maintenance part usage not found');
+    }
+    await this.workRepository.removePart(usage, user.id);
+  }
+
+  async getCost(id: string, user: PublicUser): Promise<MaintenanceRequestCost> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    this.assertCanReadRepairDetails(request, user);
+    return this.workRepository.getCost(id);
+  }
+
   private async findOrThrow(
     id: string,
   ): Promise<MaintenanceRequestWithRelations> {
@@ -457,6 +622,46 @@ export class MaintenanceRequestsService {
     ) {
       throw new ForbiddenException(
         'You can only access requests actively assigned to you',
+      );
+    }
+  }
+
+  private assertTechnicianCanEditWork(
+    request: MaintenanceRequestWithRelations,
+    user: PublicUser,
+  ): string {
+    if (user.role !== UserRole.TECHNICIAN) {
+      throw new ForbiddenException(
+        'Only the assigned technician can modify repair work',
+      );
+    }
+    if (request.status !== MaintenanceStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        'Repair work can only be modified while the request is in progress',
+      );
+    }
+    const assignment = request.assignments.find(
+      (item) => item.technician.userId === user.id,
+    );
+    if (!assignment) {
+      throw new ForbiddenException(
+        'You can only modify requests actively assigned to you',
+      );
+    }
+    return assignment.technicianId;
+  }
+
+  private assertCanReadRepairDetails(
+    request: MaintenanceRequestWithRelations,
+    user: PublicUser,
+  ): void {
+    if (
+      user.role === UserRole.RESIDENT &&
+      request.status !== MaintenanceStatus.RESOLVED &&
+      request.status !== MaintenanceStatus.CLOSED
+    ) {
+      throw new ForbiddenException(
+        'Repair details are available after the request is resolved',
       );
     }
   }
