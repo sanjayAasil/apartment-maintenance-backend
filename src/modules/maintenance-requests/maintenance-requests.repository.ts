@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
+import { MaintenanceHistoryAction } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   maintenanceRequestSelect,
+  type MaintenanceHistoryEvent,
   type MaintenanceRequestFilters,
   type MaintenanceRequestWithRelations,
   type PaginatedMaintenanceRequests,
@@ -14,10 +16,21 @@ export class MaintenanceRequestsRepository {
 
   create(
     data: Prisma.MaintenanceRequestUncheckedCreateInput,
+    actorUserId: string,
   ): Promise<MaintenanceRequestWithRelations> {
-    return this.prisma.maintenanceRequest.create({
-      data,
-      select: maintenanceRequestSelect,
+    return this.prisma.$transaction(async (transaction) => {
+      const request = await transaction.maintenanceRequest.create({
+        data,
+        select: maintenanceRequestSelect,
+      });
+      await transaction.maintenanceHistory.create({
+        data: {
+          maintenanceRequestId: request.id,
+          userId: actorUserId,
+          action: MaintenanceHistoryAction.REQUEST_CREATED,
+        },
+      });
+      return request;
     });
   }
 
@@ -88,11 +101,32 @@ export class MaintenanceRequestsRepository {
   update(
     id: string,
     data: Prisma.MaintenanceRequestUpdateInput,
+    audit?: { actorUserId: string; events: MaintenanceHistoryEvent[] },
   ): Promise<MaintenanceRequestWithRelations> {
-    return this.prisma.maintenanceRequest.update({
-      where: { id },
-      data,
-      select: maintenanceRequestSelect,
+    if (!audit?.events.length) {
+      return this.prisma.maintenanceRequest.update({
+        where: { id },
+        data,
+        select: maintenanceRequestSelect,
+      });
+    }
+    return this.prisma.$transaction(async (transaction) => {
+      const request = await transaction.maintenanceRequest.update({
+        where: { id },
+        data,
+        select: maintenanceRequestSelect,
+      });
+      await transaction.maintenanceHistory.createMany({
+        data: audit.events.map((event) => ({
+          maintenanceRequestId: id,
+          userId: audit.actorUserId,
+          action: event.action,
+          oldValue: event.oldValue,
+          newValue: event.newValue,
+          metadata: event.metadata,
+        })),
+      });
+      return request;
     });
   }
 }

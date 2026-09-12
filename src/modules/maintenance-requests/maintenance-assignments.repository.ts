@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { MaintenanceStatus } from '../../generated/prisma/enums.js';
+import {
+  MaintenanceHistoryAction,
+  MaintenanceStatus,
+} from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   maintenanceAssignmentSelect,
@@ -33,6 +36,7 @@ export class MaintenanceAssignmentsRepository {
     maintenanceRequestId: string,
     technicianId: string,
     assignedByUserId: string,
+    technicianName: string,
   ): Promise<MaintenanceAssignmentWithRelations> {
     return this.prisma.$transaction(async (transaction) => {
       const assignment = await transaction.maintenanceAssignment.create({
@@ -42,6 +46,24 @@ export class MaintenanceAssignmentsRepository {
       await transaction.maintenanceRequest.update({
         where: { id: maintenanceRequestId },
         data: { status: MaintenanceStatus.ASSIGNED },
+      });
+      await transaction.maintenanceHistory.createMany({
+        data: [
+          {
+            maintenanceRequestId,
+            userId: assignedByUserId,
+            action: MaintenanceHistoryAction.TECHNICIAN_ASSIGNED,
+            newValue: technicianId,
+            metadata: { technicianName },
+          },
+          {
+            maintenanceRequestId,
+            userId: assignedByUserId,
+            action: MaintenanceHistoryAction.STATUS_CHANGED,
+            oldValue: MaintenanceStatus.OPEN,
+            newValue: MaintenanceStatus.ASSIGNED,
+          },
+        ],
       });
       return assignment;
     });
@@ -53,22 +75,39 @@ export class MaintenanceAssignmentsRepository {
     technicianId: string,
     assignedByUserId: string,
     unassignedAt: Date,
+    previousTechnicianId: string,
+    previousTechnicianName: string,
+    technicianName: string,
   ): Promise<MaintenanceAssignmentWithRelations> {
     return this.prisma.$transaction(async (transaction) => {
       await transaction.maintenanceAssignment.update({
         where: { id: activeAssignmentId },
         data: { isActive: false, unassignedAt },
       });
-      return transaction.maintenanceAssignment.create({
+      const assignment = await transaction.maintenanceAssignment.create({
         data: { maintenanceRequestId, technicianId, assignedByUserId },
         select: maintenanceAssignmentSelect,
       });
+      await transaction.maintenanceHistory.create({
+        data: {
+          maintenanceRequestId,
+          userId: assignedByUserId,
+          action: MaintenanceHistoryAction.TECHNICIAN_REASSIGNED,
+          oldValue: previousTechnicianId,
+          newValue: technicianId,
+          metadata: { previousTechnicianName, technicianName },
+        },
+      });
+      return assignment;
     });
   }
 
   async unassign(
     activeAssignmentId: string,
     maintenanceRequestId: string,
+    actorUserId: string,
+    technicianId: string,
+    technicianName: string,
     unassignedAt: Date,
   ): Promise<void> {
     await this.prisma.$transaction(async (transaction) => {
@@ -79,6 +118,24 @@ export class MaintenanceAssignmentsRepository {
       await transaction.maintenanceRequest.update({
         where: { id: maintenanceRequestId },
         data: { status: MaintenanceStatus.OPEN },
+      });
+      await transaction.maintenanceHistory.createMany({
+        data: [
+          {
+            maintenanceRequestId,
+            userId: actorUserId,
+            action: MaintenanceHistoryAction.TECHNICIAN_UNASSIGNED,
+            oldValue: technicianId,
+            metadata: { technicianName },
+          },
+          {
+            maintenanceRequestId,
+            userId: actorUserId,
+            action: MaintenanceHistoryAction.STATUS_CHANGED,
+            oldValue: MaintenanceStatus.ASSIGNED,
+            newValue: MaintenanceStatus.OPEN,
+          },
+        ],
       });
     });
   }

@@ -1,5 +1,6 @@
 import { Prisma } from '../../generated/prisma/client.js';
 import type {
+  MaintenanceHistoryAction,
   MaintenancePriority,
   MaintenanceStatus,
 } from '../../generated/prisma/enums.js';
@@ -30,6 +31,32 @@ export const maintenanceAssignmentSelect = {
     },
   },
 } satisfies Prisma.MaintenanceAssignmentSelect;
+
+export const maintenanceCommentSelect = {
+  id: true,
+  maintenanceRequestId: true,
+  userId: true,
+  message: true,
+  createdAt: true,
+  updatedAt: true,
+  user: {
+    select: { id: true, name: true, role: true },
+  },
+} satisfies Prisma.MaintenanceCommentSelect;
+
+export const maintenanceHistorySelect = {
+  id: true,
+  maintenanceRequestId: true,
+  userId: true,
+  action: true,
+  oldValue: true,
+  newValue: true,
+  metadata: true,
+  createdAt: true,
+  user: {
+    select: { id: true, name: true, role: true },
+  },
+} satisfies Prisma.MaintenanceHistorySelect;
 
 export const maintenanceRequestSelect = {
   id: true,
@@ -99,6 +126,21 @@ export type MaintenanceAssignmentWithRelations =
   Prisma.MaintenanceAssignmentGetPayload<{
     select: typeof maintenanceAssignmentSelect;
   }>;
+
+export type MaintenanceCommentWithAuthor = Prisma.MaintenanceCommentGetPayload<{
+  select: typeof maintenanceCommentSelect;
+}>;
+
+export type MaintenanceHistoryWithActor = Prisma.MaintenanceHistoryGetPayload<{
+  select: typeof maintenanceHistorySelect;
+}>;
+
+export interface MaintenanceHistoryEvent {
+  action: MaintenanceHistoryAction;
+  oldValue?: string | null;
+  newValue?: string | null;
+  metadata?: Prisma.InputJsonValue;
+}
 
 export interface MaintenanceRequestFilters {
   search?: string;

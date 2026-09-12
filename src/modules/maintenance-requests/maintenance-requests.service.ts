@@ -6,19 +6,29 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
-import { MaintenanceStatus, UserRole } from '../../generated/prisma/enums.js';
+import {
+  MaintenanceHistoryAction,
+  MaintenanceStatus,
+  UserRole,
+} from '../../generated/prisma/enums.js';
 import { MaintenanceCategoriesService } from '../maintenance-categories/maintenance-categories.service.js';
 import { ResidentsService } from '../residents/residents.service.js';
 import { TechniciansService } from '../technicians/technicians.service.js';
+import type { TechnicianWithRelations } from '../technicians/technicians.types.js';
 import type { PublicUser } from '../users/users.types.js';
 import type { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
 import type { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
 import type { UpdateMaintenanceRequestDto } from './dto/update-maintenance-request.dto.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
+import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
+import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import type {
   MaintenanceRequestWithRelations,
   MaintenanceAssignmentWithRelations,
+  MaintenanceCommentWithAuthor,
+  MaintenanceHistoryEvent,
+  MaintenanceHistoryWithActor,
   PaginatedMaintenanceRequests,
 } from './maintenance-requests.types.js';
 
@@ -45,6 +55,8 @@ export class MaintenanceRequestsService {
     private readonly categoriesService: MaintenanceCategoriesService,
     private readonly techniciansService: TechniciansService,
     private readonly assignmentsRepository: MaintenanceAssignmentsRepository,
+    private readonly commentsRepository: MaintenanceCommentsRepository,
+    private readonly historyRepository: MaintenanceHistoryRepository,
   ) {}
 
   async create(
@@ -61,15 +73,18 @@ export class MaintenanceRequestsService {
     }
 
     try {
-      return await this.repository.create({
-        residentId: resident.id,
-        apartmentId: resident.apartmentId,
-        categoryId: input.categoryId,
-        title: input.title.trim(),
-        description: input.description.trim(),
-        priority: input.priority,
-        status: MaintenanceStatus.OPEN,
-      });
+      return await this.repository.create(
+        {
+          residentId: resident.id,
+          apartmentId: resident.apartmentId,
+          categoryId: input.categoryId,
+          title: input.title.trim(),
+          description: input.description.trim(),
+          priority: input.priority,
+          status: MaintenanceStatus.OPEN,
+        },
+        user.id,
+      );
     } catch (error) {
       this.throwKnownDatabaseError(error);
       throw error;
@@ -118,22 +133,63 @@ export class MaintenanceRequestsService {
     if (request.status !== MaintenanceStatus.OPEN) {
       throw new BadRequestException('Only open requests can be edited');
     }
+    let nextCategoryName: string | undefined;
     if (input.categoryId !== undefined) {
       const category = await this.categoriesService.getById(input.categoryId);
       if (!category.isActive) {
         throw new BadRequestException('Maintenance category must be active');
       }
+      nextCategoryName = category.name;
     }
-    return this.repository.update(id, {
-      ...(input.categoryId !== undefined
-        ? { category: { connect: { id: input.categoryId } } }
-        : {}),
-      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-      ...(input.description !== undefined
-        ? { description: input.description.trim() }
-        : {}),
-      ...(input.priority !== undefined ? { priority: input.priority } : {}),
-    });
+    const events: MaintenanceHistoryEvent[] = [];
+    if (input.categoryId && input.categoryId !== request.categoryId) {
+      events.push({
+        action: MaintenanceHistoryAction.CATEGORY_CHANGED,
+        oldValue: request.categoryId,
+        newValue: input.categoryId,
+        metadata: {
+          previousCategoryName: request.category.name,
+          categoryName: nextCategoryName,
+        },
+      });
+    }
+    if (input.priority && input.priority !== request.priority) {
+      events.push({
+        action: MaintenanceHistoryAction.PRIORITY_CHANGED,
+        oldValue: request.priority,
+        newValue: input.priority,
+      });
+    }
+    const updatedFields: string[] = [];
+    if (input.title !== undefined && input.title.trim() !== request.title) {
+      updatedFields.push('title');
+    }
+    if (
+      input.description !== undefined &&
+      input.description.trim() !== request.description
+    ) {
+      updatedFields.push('description');
+    }
+    if (updatedFields.length > 0) {
+      events.push({
+        action: MaintenanceHistoryAction.REQUEST_UPDATED,
+        metadata: { fields: updatedFields },
+      });
+    }
+    return this.repository.update(
+      id,
+      {
+        ...(input.categoryId !== undefined
+          ? { category: { connect: { id: input.categoryId } } }
+          : {}),
+        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description.trim() }
+          : {}),
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      },
+      { actorUserId: user.id, events },
+    );
   }
 
   async updateStatus(
@@ -186,11 +242,26 @@ export class MaintenanceRequestsService {
     }
 
     const now = new Date();
-    return this.repository.update(id, {
-      status: nextStatus,
-      ...(nextStatus === MaintenanceStatus.RESOLVED ? { resolvedAt: now } : {}),
-      ...(nextStatus === MaintenanceStatus.CLOSED ? { closedAt: now } : {}),
-    });
+    return this.repository.update(
+      id,
+      {
+        status: nextStatus,
+        ...(nextStatus === MaintenanceStatus.RESOLVED
+          ? { resolvedAt: now }
+          : {}),
+        ...(nextStatus === MaintenanceStatus.CLOSED ? { closedAt: now } : {}),
+      },
+      {
+        actorUserId: user.id,
+        events: [
+          {
+            action: MaintenanceHistoryAction.STATUS_CHANGED,
+            oldValue: request.status,
+            newValue: nextStatus,
+          },
+        ],
+      },
+    );
   }
 
   async assignTechnician(
@@ -207,12 +278,16 @@ export class MaintenanceRequestsService {
     if (request.status !== MaintenanceStatus.OPEN) {
       throw new BadRequestException('Only open requests can be assigned');
     }
-    await this.validateTechnician(technicianId, request.categoryId);
+    const technician = await this.validateTechnician(
+      technicianId,
+      request.categoryId,
+    );
     try {
       return await this.assignmentsRepository.assign(
         id,
         technicianId,
         assignedByUserId,
+        technician.user.name,
       );
     } catch (error) {
       this.throwKnownAssignmentDatabaseError(error);
@@ -240,7 +315,10 @@ export class MaintenanceRequestsService {
         'This technician is already assigned to the request',
       );
     }
-    await this.validateTechnician(technicianId, request.categoryId);
+    const technician = await this.validateTechnician(
+      technicianId,
+      request.categoryId,
+    );
     try {
       return await this.assignmentsRepository.reassign(
         active.id,
@@ -248,6 +326,9 @@ export class MaintenanceRequestsService {
         technicianId,
         assignedByUserId,
         new Date(),
+        active.technicianId,
+        active.technician.user.name,
+        technician.user.name,
       );
     } catch (error) {
       this.throwKnownAssignmentDatabaseError(error);
@@ -255,7 +336,7 @@ export class MaintenanceRequestsService {
     }
   }
 
-  async unassignTechnician(id: string): Promise<void> {
+  async unassignTechnician(id: string, actorUserId: string): Promise<void> {
     const request = await this.findOrThrow(id);
     if (request.status !== MaintenanceStatus.ASSIGNED) {
       throw new BadRequestException('Only assigned requests can be unassigned');
@@ -264,7 +345,14 @@ export class MaintenanceRequestsService {
     if (!active) {
       throw new NotFoundException('Active maintenance assignment not found');
     }
-    await this.assignmentsRepository.unassign(active.id, id, new Date());
+    await this.assignmentsRepository.unassign(
+      active.id,
+      id,
+      actorUserId,
+      active.technicianId,
+      active.technician.user.name,
+      new Date(),
+    );
   }
 
   async getCurrentAssignment(
@@ -286,6 +374,59 @@ export class MaintenanceRequestsService {
   ): Promise<MaintenanceAssignmentWithRelations[]> {
     await this.findOrThrow(id);
     return this.assignmentsRepository.findHistory(id);
+  }
+
+  async addComment(
+    id: string,
+    message: string,
+    user: PublicUser,
+  ): Promise<MaintenanceCommentWithAuthor> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    const normalizedMessage = message.trim();
+    if (!normalizedMessage) {
+      throw new BadRequestException('Comment message must not be empty');
+    }
+    if (normalizedMessage.length > 2000) {
+      throw new BadRequestException(
+        'Comment message must not exceed 2000 characters',
+      );
+    }
+    try {
+      return await this.commentsRepository.create(
+        id,
+        user.id,
+        normalizedMessage,
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'Related maintenance request or user no longer exists',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getComments(
+    id: string,
+    user: PublicUser,
+  ): Promise<MaintenanceCommentWithAuthor[]> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    return this.commentsRepository.findByRequestId(id);
+  }
+
+  async getHistory(
+    id: string,
+    user: PublicUser,
+  ): Promise<MaintenanceHistoryWithActor[]> {
+    const request = await this.findOrThrow(id);
+    this.assertCanAccess(request, user);
+    return this.historyRepository.findByRequestId(id);
   }
 
   private async findOrThrow(
@@ -323,7 +464,7 @@ export class MaintenanceRequestsService {
   private async validateTechnician(
     technicianId: string,
     categoryId: string,
-  ): Promise<void> {
+  ): Promise<TechnicianWithRelations> {
     const technician = await this.techniciansService.getById(technicianId);
     if (!technician.isActive) {
       throw new BadRequestException('Technician must be active');
@@ -339,6 +480,7 @@ export class MaintenanceRequestsService {
         'Technician does not have the required category skill',
       );
     }
+    return technician;
   }
 
   private throwKnownAssignmentDatabaseError(error: unknown): void {

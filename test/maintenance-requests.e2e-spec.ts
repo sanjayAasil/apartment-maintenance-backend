@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import {
+  MaintenanceHistoryAction,
   MaintenancePriority,
   MaintenanceStatus,
   UserRole,
@@ -166,6 +167,12 @@ describe.sequential('Maintenance Requests API', () => {
     ).body.accessToken as string;
   }
   async function cleanup(): Promise<void> {
+    await prisma.maintenanceComment.deleteMany({
+      where: { maintenanceRequest: { category: { name: categoryName } } },
+    });
+    await prisma.maintenanceHistory.deleteMany({
+      where: { maintenanceRequest: { category: { name: categoryName } } },
+    });
     await prisma.maintenanceAssignment.deleteMany({
       where: {
         OR: [
@@ -377,6 +384,58 @@ describe.sequential('Maintenance Requests API', () => {
     ).toHaveLength(1);
   });
 
+  it('allows only involved users to add and read comments', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${residentToken}`)
+      .send({ message: ' The leak is getting worse. ' })
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.message).toBe('The leak is getting worse.');
+        expect(response.body.user).toMatchObject({
+          name: 'Requests Resident E2E',
+          role: UserRole.RESIDENT,
+        });
+        expect(response.body.user).not.toHaveProperty('email');
+      });
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${secondTechnicianToken}`)
+      .send({ message: 'I inspected the valve.' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ message: 'Replacement approved.' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({ message: 'No longer assigned.' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${otherResidentToken}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ message: '   ' })
+      .expect(400);
+
+    const comments = await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/comments`)
+      .set('Authorization', `Bearer ${residentToken}`)
+      .expect(200);
+    expect(
+      comments.body.map((item: { message: string }) => item.message),
+    ).toEqual([
+      'The leak is getting worse.',
+      'I inspected the valve.',
+      'Replacement approved.',
+    ]);
+  });
+
   it('lets the assigned technician start and resolve, then the resident close', async () => {
     await request(app.getHttpServer())
       .patch(`/api/maintenance-requests/${maintenanceRequestId}/status`)
@@ -395,6 +454,75 @@ describe.sequential('Maintenance Requests API', () => {
       .send({ status: MaintenanceStatus.CLOSED })
       .expect(200);
     expect(closed.body.closedAt).not.toBeNull();
+  });
+
+  it('returns chronological business audit history to involved users', async () => {
+    const historyResponse = await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/history`)
+      .set('Authorization', `Bearer ${residentToken}`)
+      .expect(200);
+    const history = historyResponse.body as Array<{
+      action: MaintenanceHistoryAction;
+      oldValue: string | null;
+      newValue: string | null;
+      metadata: Record<string, unknown> | null;
+    }>;
+    expect(history[0].action).toBe(MaintenanceHistoryAction.REQUEST_CREATED);
+    expect(
+      history.some(
+        (item) => item.action === MaintenanceHistoryAction.PRIORITY_CHANGED,
+      ),
+    ).toBe(true);
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        action: MaintenanceHistoryAction.TECHNICIAN_ASSIGNED,
+        oldValue: null,
+        newValue: technicianId,
+      }),
+    );
+    expect(
+      history.filter(
+        (item) => item.action === MaintenanceHistoryAction.TECHNICIAN_ASSIGNED,
+      ),
+    ).toHaveLength(2);
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        action: MaintenanceHistoryAction.TECHNICIAN_UNASSIGNED,
+        oldValue: technicianId,
+        newValue: null,
+      }),
+    );
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        action: MaintenanceHistoryAction.TECHNICIAN_REASSIGNED,
+        oldValue: technicianId,
+        newValue: secondTechnicianId,
+      }),
+    );
+    expect(
+      history.filter(
+        (item) => item.action === MaintenanceHistoryAction.COMMENT_ADDED,
+      ),
+    ).toHaveLength(3);
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        action: MaintenanceHistoryAction.STATUS_CHANGED,
+        oldValue: MaintenanceStatus.IN_PROGRESS,
+        newValue: MaintenanceStatus.RESOLVED,
+      }),
+    );
+    await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/history`)
+      .set('Authorization', `Bearer ${secondTechnicianToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/history`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/maintenance-requests/${maintenanceRequestId}/history`)
+      .set('Authorization', `Bearer ${otherResidentToken}`)
+      .expect(403);
   });
 
   it('returns not found for an unknown request', () =>

@@ -29,18 +29,32 @@ enum MaintenanceStatus {
   CANCELLED
 }
 
+enum MaintenanceHistoryAction {
+  REQUEST_CREATED
+  REQUEST_UPDATED
+  STATUS_CHANGED
+  TECHNICIAN_ASSIGNED
+  TECHNICIAN_REASSIGNED
+  TECHNICIAN_UNASSIGNED
+  COMMENT_ADDED
+  CATEGORY_CHANGED
+  PRIORITY_CHANGED
+}
+
 model User {
-  id                 String                  @id @default(uuid()) @db.Uuid
-  name               String
-  email              String                  @unique
-  passwordHash       String
-  role               UserRole
-  isActive           Boolean                 @default(true)
-  createdAt          DateTime                @default(now())
-  updatedAt          DateTime                @updatedAt
-  resident           Resident?
-  technician         Technician?
-  assignmentsCreated MaintenanceAssignment[] @relation("AssignmentCreator")
+  id                  String                  @id @default(uuid()) @db.Uuid
+  name                String
+  email               String                  @unique
+  passwordHash        String
+  role                UserRole
+  isActive            Boolean                 @default(true)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  resident            Resident?
+  technician          Technician?
+  assignmentsCreated  MaintenanceAssignment[] @relation("AssignmentCreator")
+  maintenanceComments MaintenanceComment[]
+  maintenanceHistory  MaintenanceHistory[]
 
   @@index([role])
   @@index([isActive])
@@ -109,12 +123,47 @@ model MaintenanceRequest {
   apartment   Apartment               @relation(fields: [apartmentId], references: [id])
   category    MaintenanceCategory     @relation(fields: [categoryId], references: [id])
   assignments MaintenanceAssignment[]
+  comments    MaintenanceComment[]
+  history     MaintenanceHistory[]
 
   @@index([residentId])
   @@index([apartmentId])
   @@index([categoryId])
   @@index([status])
   @@index([priority])
+  @@index([createdAt])
+}
+
+model MaintenanceComment {
+  id                   String             @id @default(uuid()) @db.Uuid
+  maintenanceRequestId String             @db.Uuid
+  userId               String             @db.Uuid
+  message              String
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  maintenanceRequest   MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id])
+  user                 User               @relation(fields: [userId], references: [id])
+
+  @@index([maintenanceRequestId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model MaintenanceHistory {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  maintenanceRequestId String                   @db.Uuid
+  userId               String?                  @db.Uuid
+  action               MaintenanceHistoryAction
+  oldValue             String?
+  newValue             String?
+  metadata             Json?
+  createdAt            DateTime                 @default(now())
+  maintenanceRequest   MaintenanceRequest       @relation(fields: [maintenanceRequestId], references: [id])
+  user                 User?                    @relation(fields: [userId], references: [id])
+
+  @@index([maintenanceRequestId])
+  @@index([userId])
+  @@index([action])
   @@index([createdAt])
 }
 

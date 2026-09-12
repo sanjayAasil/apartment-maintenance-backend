@@ -24,6 +24,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import type { PublicUser } from '../users/users.types.js';
 import { AssignTechnicianDto } from './dto/assign-technician.dto.js';
+import { CreateMaintenanceCommentDto } from './dto/create-maintenance-comment.dto.js';
 import { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
 import { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
 import { UpdateMaintenanceRequestStatusDto } from './dto/update-maintenance-request-status.dto.js';
@@ -87,8 +88,11 @@ export class MaintenanceRequestsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Unassign a request before work starts' })
-  unassignTechnician(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.service.unassignTechnician(id);
+  unassignTechnician(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.unassignTechnician(id, user.id);
   }
 
   @Get(':id/assignment')
@@ -106,6 +110,38 @@ export class MaintenanceRequestsController {
   @ApiOperation({ summary: 'Get request assignment history' })
   getAssignmentHistory(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.getAssignmentHistory(id);
+  }
+
+  @Post(':id/comments')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Add a comment to an accessible request' })
+  @ApiCreatedResponse({ description: 'Comment added' })
+  addComment(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: CreateMaintenanceCommentDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.addComment(id, input.message, user);
+  }
+
+  @Get(':id/comments')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'List comments for an accessible request' })
+  getComments(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getComments(id, user);
+  }
+
+  @Get(':id/history')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get the audit history for an accessible request' })
+  getHistory(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getHistory(id, user);
   }
 
   @Get(':id')

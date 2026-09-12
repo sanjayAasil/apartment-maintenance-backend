@@ -12,17 +12,22 @@ describe('MaintenanceRequestsController authorization', () => {
     ).toEqual([UserRole.RESIDENT]);
   });
 
-  it.each(['list', 'getById', 'updateStatus', 'getCurrentAssignment'] as const)(
-    'allows admins, residents, and technicians on %s',
-    (method) => {
-      expect(
-        Reflect.getMetadata(
-          ROLES_KEY,
-          MaintenanceRequestsController.prototype[method],
-        ),
-      ).toEqual([UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN]);
-    },
-  );
+  it.each([
+    'list',
+    'getById',
+    'updateStatus',
+    'getCurrentAssignment',
+    'addComment',
+    'getComments',
+    'getHistory',
+  ] as const)('allows admins, residents, and technicians on %s', (method) => {
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        MaintenanceRequestsController.prototype[method],
+      ),
+    ).toEqual([UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN]);
+  });
 
   it('keeps detail editing restricted to admins and residents', () => {
     expect(

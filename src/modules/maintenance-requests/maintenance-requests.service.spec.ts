@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  MaintenanceHistoryAction,
   MaintenancePriority,
   MaintenanceStatus,
   UserRole,
@@ -14,6 +15,8 @@ import { ResidentsService } from '../residents/residents.service.js';
 import { TechniciansService } from '../technicians/technicians.service.js';
 import type { PublicUser } from '../users/users.types.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
+import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
+import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
 import type { MaintenanceRequestWithRelations } from './maintenance-requests.types.js';
@@ -146,12 +149,22 @@ describe('MaintenanceRequestsService', () => {
     reassign: vi.fn(),
     unassign: vi.fn(),
   };
+  const commentsRepository = {
+    create: vi.fn(),
+    findByRequestId: vi.fn(),
+  };
+  const historyRepository = {
+    create: vi.fn(),
+    findByRequestId: vi.fn(),
+  };
   const service = new MaintenanceRequestsService(
     repository as unknown as MaintenanceRequestsRepository,
     residentsService as unknown as ResidentsService,
     categoriesService as unknown as MaintenanceCategoriesService,
     techniciansService as unknown as TechniciansService,
     assignmentsRepository as unknown as MaintenanceAssignmentsRepository,
+    commentsRepository as unknown as MaintenanceCommentsRepository,
+    historyRepository as unknown as MaintenanceHistoryRepository,
   );
 
   beforeEach(() => vi.clearAllMocks());
@@ -169,15 +182,18 @@ describe('MaintenanceRequestsService', () => {
       },
       residentUser,
     );
-    expect(repository.create).toHaveBeenCalledWith({
-      residentId: resident.id,
-      apartmentId: resident.apartmentId,
-      categoryId: category.id,
-      title: 'Leaking tap',
-      description: 'The kitchen tap is leaking continuously.',
-      priority: MaintenancePriority.MEDIUM,
-      status: MaintenanceStatus.OPEN,
-    });
+    expect(repository.create).toHaveBeenCalledWith(
+      {
+        residentId: resident.id,
+        apartmentId: resident.apartmentId,
+        categoryId: category.id,
+        title: 'Leaking tap',
+        description: 'The kitchen tap is leaking continuously.',
+        priority: MaintenancePriority.MEDIUM,
+        status: MaintenanceStatus.OPEN,
+      },
+      residentUser.id,
+    );
   });
 
   it('rejects inactive residents and categories', async () => {
@@ -301,10 +317,22 @@ describe('MaintenanceRequestsService', () => {
       { categoryId: category.id, title: ' Updated leak ' },
       residentUser,
     );
-    expect(repository.update).toHaveBeenCalledWith(request.id, {
-      category: { connect: { id: category.id } },
-      title: 'Updated leak',
-    });
+    expect(repository.update).toHaveBeenCalledWith(
+      request.id,
+      {
+        category: { connect: { id: category.id } },
+        title: 'Updated leak',
+      },
+      {
+        actorUserId: residentUser.id,
+        events: [
+          {
+            action: MaintenanceHistoryAction.REQUEST_UPDATED,
+            metadata: { fields: ['title'] },
+          },
+        ],
+      },
+    );
     repository.findById.mockResolvedValue({
       ...request,
       status: MaintenanceStatus.IN_PROGRESS,
@@ -325,9 +353,20 @@ describe('MaintenanceRequestsService', () => {
       MaintenanceStatus.CANCELLED,
       residentUser,
     );
-    expect(repository.update).toHaveBeenCalledWith(request.id, {
-      status: MaintenanceStatus.CANCELLED,
-    });
+    expect(repository.update).toHaveBeenCalledWith(
+      request.id,
+      { status: MaintenanceStatus.CANCELLED },
+      {
+        actorUserId: residentUser.id,
+        events: [
+          {
+            action: MaintenanceHistoryAction.STATUS_CHANGED,
+            oldValue: MaintenanceStatus.OPEN,
+            newValue: MaintenanceStatus.CANCELLED,
+          },
+        ],
+      },
+    );
   });
 
   it('sets resolution and closure timestamps on valid transitions', async () => {
@@ -337,10 +376,22 @@ describe('MaintenanceRequestsService', () => {
     });
     repository.update.mockResolvedValue(request);
     await service.updateStatus(request.id, MaintenanceStatus.RESOLVED, admin);
-    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
-      status: MaintenanceStatus.RESOLVED,
-      resolvedAt: expect.any(Date),
-    });
+    expect(repository.update).toHaveBeenLastCalledWith(
+      request.id,
+      {
+        status: MaintenanceStatus.RESOLVED,
+        resolvedAt: expect.any(Date),
+      },
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            action: MaintenanceHistoryAction.STATUS_CHANGED,
+            oldValue: MaintenanceStatus.IN_PROGRESS,
+            newValue: MaintenanceStatus.RESOLVED,
+          }),
+        ],
+      }),
+    );
     repository.findById.mockResolvedValueOnce({
       ...request,
       status: MaintenanceStatus.RESOLVED,
@@ -350,10 +401,21 @@ describe('MaintenanceRequestsService', () => {
       MaintenanceStatus.CLOSED,
       residentUser,
     );
-    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
-      status: MaintenanceStatus.CLOSED,
-      closedAt: expect.any(Date),
-    });
+    expect(repository.update).toHaveBeenLastCalledWith(
+      request.id,
+      {
+        status: MaintenanceStatus.CLOSED,
+        closedAt: expect.any(Date),
+      },
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            oldValue: MaintenanceStatus.RESOLVED,
+            newValue: MaintenanceStatus.CLOSED,
+          }),
+        ],
+      }),
+    );
   });
 
   it('assigns a matching active and available technician', async () => {
@@ -368,6 +430,7 @@ describe('MaintenanceRequestsService', () => {
       request.id,
       technician.id,
       admin.id,
+      technician.user.name,
     );
   });
 
@@ -419,6 +482,9 @@ describe('MaintenanceRequestsService', () => {
       newTechnician.id,
       admin.id,
       expect.any(Date),
+      assignment.technicianId,
+      assignment.technician.user.name,
+      newTechnician.user.name,
     );
     assignmentsRepository.findHistory.mockResolvedValue([
       newAssignment,
@@ -436,10 +502,13 @@ describe('MaintenanceRequestsService', () => {
       assignments: [assignment],
     });
     assignmentsRepository.findActiveAssignment.mockResolvedValue(assignment);
-    await service.unassignTechnician(request.id);
+    await service.unassignTechnician(request.id, admin.id);
     expect(assignmentsRepository.unassign).toHaveBeenCalledWith(
       assignment.id,
       request.id,
+      admin.id,
+      assignment.technicianId,
+      assignment.technician.user.name,
       expect.any(Date),
     );
   });
@@ -480,9 +549,19 @@ describe('MaintenanceRequestsService', () => {
       MaintenanceStatus.IN_PROGRESS,
       technicianUser,
     );
-    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
-      status: MaintenanceStatus.IN_PROGRESS,
-    });
+    expect(repository.update).toHaveBeenLastCalledWith(
+      request.id,
+      { status: MaintenanceStatus.IN_PROGRESS },
+      expect.objectContaining({
+        actorUserId: technicianUser.id,
+        events: [
+          expect.objectContaining({
+            oldValue: MaintenanceStatus.ASSIGNED,
+            newValue: MaintenanceStatus.IN_PROGRESS,
+          }),
+        ],
+      }),
+    );
 
     repository.findById.mockResolvedValueOnce({
       ...request,
@@ -494,10 +573,22 @@ describe('MaintenanceRequestsService', () => {
       MaintenanceStatus.RESOLVED,
       technicianUser,
     );
-    expect(repository.update).toHaveBeenLastCalledWith(request.id, {
-      status: MaintenanceStatus.RESOLVED,
-      resolvedAt: expect.any(Date),
-    });
+    expect(repository.update).toHaveBeenLastCalledWith(
+      request.id,
+      {
+        status: MaintenanceStatus.RESOLVED,
+        resolvedAt: expect.any(Date),
+      },
+      expect.objectContaining({
+        actorUserId: technicianUser.id,
+        events: [
+          expect.objectContaining({
+            oldValue: MaintenanceStatus.IN_PROGRESS,
+            newValue: MaintenanceStatus.RESOLVED,
+          }),
+        ],
+      }),
+    );
   });
 
   it('rejects invalid, assignment-owned, and technician transitions', async () => {
@@ -514,5 +605,105 @@ describe('MaintenanceRequestsService', () => {
         role: UserRole.TECHNICIAN,
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows involved users to add and read chronological comments', async () => {
+    const comment = {
+      id: 'comment-id',
+      maintenanceRequestId: request.id,
+      userId: residentUser.id,
+      message: 'The leak is getting worse.',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: {
+        id: residentUser.id,
+        name: residentUser.name,
+        role: residentUser.role,
+      },
+    };
+    repository.findById.mockResolvedValue(request);
+    commentsRepository.create.mockResolvedValue(comment);
+    commentsRepository.findByRequestId.mockResolvedValue([comment]);
+
+    await expect(
+      service.addComment(
+        request.id,
+        ' The leak is getting worse. ',
+        residentUser,
+      ),
+    ).resolves.toEqual(comment);
+    expect(commentsRepository.create).toHaveBeenCalledWith(
+      request.id,
+      residentUser.id,
+      'The leak is getting worse.',
+    );
+    await expect(service.getComments(request.id, admin)).resolves.toEqual([
+      comment,
+    ]);
+
+    repository.findById.mockResolvedValueOnce({
+      ...request,
+      status: MaintenanceStatus.ASSIGNED,
+      assignments: [assignment],
+    });
+    commentsRepository.create.mockResolvedValue({
+      ...comment,
+      userId: technicianUser.id,
+    });
+    await expect(
+      service.addComment(request.id, 'Valve inspected.', technicianUser),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects comments and history access from unrelated users', async () => {
+    repository.findById.mockResolvedValue(request);
+    const unrelatedResident = { ...residentUser, id: 'another-user' };
+    await expect(
+      service.addComment(request.id, 'Not my request', unrelatedResident),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.getHistory(request.id, {
+        ...technicianUser,
+        id: 'unassigned-technician',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.addComment(request.id, '   ', admin),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('returns audit history to the owner, active technician, and admin', async () => {
+    const entry = {
+      id: 'history-id',
+      maintenanceRequestId: request.id,
+      userId: residentUser.id,
+      action: MaintenanceHistoryAction.REQUEST_CREATED,
+      oldValue: null,
+      newValue: null,
+      metadata: null,
+      createdAt: new Date(),
+      user: {
+        id: residentUser.id,
+        name: residentUser.name,
+        role: residentUser.role,
+      },
+    };
+    historyRepository.findByRequestId.mockResolvedValue([entry]);
+    repository.findById.mockResolvedValueOnce(request);
+    await expect(service.getHistory(request.id, residentUser)).resolves.toEqual(
+      [entry],
+    );
+    repository.findById.mockResolvedValueOnce({
+      ...request,
+      status: MaintenanceStatus.ASSIGNED,
+      assignments: [assignment],
+    });
+    await expect(
+      service.getHistory(request.id, technicianUser),
+    ).resolves.toEqual([entry]);
+    repository.findById.mockResolvedValueOnce(request);
+    await expect(service.getHistory(request.id, admin)).resolves.toEqual([
+      entry,
+    ]);
   });
 });

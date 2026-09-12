@@ -3,6 +3,8 @@ import { MaintenanceCategoriesModule } from '../maintenance-categories/maintenan
 import { ResidentsModule } from '../residents/residents.module.js';
 import { TechniciansModule } from '../technicians/technicians.module.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
+import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
+import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsController } from './maintenance-requests.controller.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
@@ -14,6 +16,8 @@ import { MaintenanceRequestsService } from './maintenance-requests.service.js';
     MaintenanceRequestsService,
     MaintenanceRequestsRepository,
     MaintenanceAssignmentsRepository,
+    MaintenanceCommentsRepository,
+    MaintenanceHistoryRepository,
   ],
   exports: [MaintenanceRequestsService],
 })
