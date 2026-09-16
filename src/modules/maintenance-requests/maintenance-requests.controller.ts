@@ -26,6 +26,7 @@ import type { PublicUser } from '../users/users.types.js';
 import { AssignTechnicianDto } from './dto/assign-technician.dto.js';
 import { AddMaintenanceRequestPartDto } from './dto/add-maintenance-request-part.dto.js';
 import { CreateMaintenanceCommentDto } from './dto/create-maintenance-comment.dto.js';
+import { CreateFeedbackDto } from './dto/create-feedback.dto.js';
 import { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
 import { CreateMaintenanceWorkNoteDto } from './dto/create-maintenance-work-note.dto.js';
 import { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
@@ -145,6 +146,28 @@ export class MaintenanceRequestsController {
     @CurrentUser() user: PublicUser,
   ) {
     return this.service.getHistory(id, user);
+  }
+
+  @Post(':id/feedback')
+  @Roles(UserRole.RESIDENT)
+  @ApiOperation({ summary: 'Submit feedback for a closed owned request' })
+  @ApiCreatedResponse({ description: 'Feedback submitted' })
+  submitFeedback(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() input: CreateFeedbackDto,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.submitFeedback(id, input, user);
+  }
+
+  @Get(':id/feedback')
+  @Roles(UserRole.ADMIN, UserRole.RESIDENT, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get feedback for an accessible request' })
+  getFeedback(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: PublicUser,
+  ) {
+    return this.service.getFeedback(id, user);
   }
 
   @Post(':id/work-notes')

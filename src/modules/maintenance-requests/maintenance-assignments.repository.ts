@@ -32,6 +32,20 @@ export class MaintenanceAssignmentsRepository {
     });
   }
 
+  async wasAssignedToUser(
+    maintenanceRequestId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const assignment = await this.prisma.maintenanceAssignment.findFirst({
+      where: {
+        maintenanceRequestId,
+        technician: { userId },
+      },
+      select: { id: true },
+    });
+    return assignment !== null;
+  }
+
   assign(
     maintenanceRequestId: string,
     technicianId: string,

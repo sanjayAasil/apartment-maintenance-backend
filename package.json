@@ -17,6 +17,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "tunnel": "node scripts/ngrok-tunnel.mjs",
     "lint": "oxlint src/ test/",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",

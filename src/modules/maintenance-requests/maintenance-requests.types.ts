@@ -58,6 +58,22 @@ export const maintenanceHistorySelect = {
   },
 } satisfies Prisma.MaintenanceHistorySelect;
 
+export const maintenanceFeedbackSelect = {
+  id: true,
+  maintenanceRequestId: true,
+  residentId: true,
+  rating: true,
+  comment: true,
+  createdAt: true,
+  updatedAt: true,
+  resident: {
+    select: {
+      id: true,
+      user: { select: { id: true, name: true } },
+    },
+  },
+} satisfies Prisma.FeedbackSelect;
+
 export const maintenanceWorkNoteSelect = {
   id: true,
   maintenanceRequestId: true,
@@ -172,6 +188,10 @@ export type MaintenanceCommentWithAuthor = Prisma.MaintenanceCommentGetPayload<{
 
 export type MaintenanceHistoryWithActor = Prisma.MaintenanceHistoryGetPayload<{
   select: typeof maintenanceHistorySelect;
+}>;
+
+export type MaintenanceFeedbackWithResident = Prisma.FeedbackGetPayload<{
+  select: typeof maintenanceFeedbackSelect;
 }>;
 
 export type MaintenanceWorkNoteWithTechnician =

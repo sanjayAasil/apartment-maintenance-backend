@@ -12,6 +12,15 @@ describe('MaintenanceRequestsController authorization', () => {
     ).toEqual([UserRole.RESIDENT]);
   });
 
+  it('restricts feedback submission to residents', () => {
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        MaintenanceRequestsController.prototype.submitFeedback,
+      ),
+    ).toEqual([UserRole.RESIDENT]);
+  });
+
   it.each([
     'list',
     'getById',
@@ -23,6 +32,7 @@ describe('MaintenanceRequestsController authorization', () => {
     'getWorkNote',
     'getParts',
     'getCost',
+    'getFeedback',
   ] as const)('allows admins, residents, and technicians on %s', (method) => {
     expect(
       Reflect.getMetadata(

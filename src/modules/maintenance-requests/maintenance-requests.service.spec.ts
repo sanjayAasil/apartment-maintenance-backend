@@ -18,6 +18,7 @@ import { TechniciansService } from '../technicians/technicians.service.js';
 import type { PublicUser } from '../users/users.types.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
 import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
+import { MaintenanceFeedbackRepository } from './maintenance-feedback.repository.js';
 import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
@@ -151,6 +152,7 @@ describe('MaintenanceRequestsService', () => {
     assign: vi.fn(),
     reassign: vi.fn(),
     unassign: vi.fn(),
+    wasAssignedToUser: vi.fn(),
   };
   const commentsRepository = {
     create: vi.fn(),
@@ -159,6 +161,10 @@ describe('MaintenanceRequestsService', () => {
   const historyRepository = {
     create: vi.fn(),
     findByRequestId: vi.fn(),
+  };
+  const feedbackRepository = {
+    findByRequestId: vi.fn(),
+    create: vi.fn(),
   };
   const workRepository = {
     findWorkNote: vi.fn(),
@@ -179,6 +185,7 @@ describe('MaintenanceRequestsService', () => {
     assignmentsRepository as unknown as MaintenanceAssignmentsRepository,
     commentsRepository as unknown as MaintenanceCommentsRepository,
     historyRepository as unknown as MaintenanceHistoryRepository,
+    feedbackRepository as unknown as MaintenanceFeedbackRepository,
     workRepository as unknown as MaintenanceWorkRepository,
     partsService as unknown as PartsService,
   );
@@ -878,5 +885,122 @@ describe('MaintenanceRequestsService', () => {
     await expect(
       service.addPart(request.id, 'part-id', 1, technicianUser),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('feedback', () => {
+    const closedRequest = {
+      ...request,
+      status: MaintenanceStatus.CLOSED,
+      closedAt: new Date('2026-09-05'),
+    };
+    const feedback = {
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      maintenanceRequestId: request.id,
+      residentId: resident.id,
+      rating: 5,
+      comment: 'Issue fixed properly.',
+      createdAt: new Date('2026-09-06'),
+      updatedAt: new Date('2026-09-06'),
+      resident: {
+        id: resident.id,
+        user: { id: residentUser.id, name: residentUser.name },
+      },
+    };
+
+    it('lets the owning resident submit feedback and creates it once', async () => {
+      repository.findById.mockResolvedValue(closedRequest);
+      residentsService.getByUserId.mockResolvedValue(resident);
+      feedbackRepository.findByRequestId.mockResolvedValue(null);
+      feedbackRepository.create.mockResolvedValue(feedback);
+
+      await expect(
+        service.submitFeedback(
+          request.id,
+          { rating: 5, comment: ' Issue fixed properly. ' },
+          residentUser,
+        ),
+      ).resolves.toEqual(feedback);
+      expect(feedbackRepository.create).toHaveBeenCalledWith(
+        request.id,
+        resident.id,
+        residentUser.id,
+        5,
+        'Issue fixed properly.',
+      );
+    });
+
+    it.each([1, 5])('accepts boundary rating %s', async (rating) => {
+      repository.findById.mockResolvedValue(closedRequest);
+      residentsService.getByUserId.mockResolvedValue(resident);
+      feedbackRepository.findByRequestId.mockResolvedValue(null);
+      feedbackRepository.create.mockResolvedValue({ ...feedback, rating });
+      await expect(
+        service.submitFeedback(request.id, { rating }, residentUser),
+      ).resolves.toMatchObject({ rating });
+    });
+
+    it.each([0, 6])('rejects out-of-range rating %s', async (rating) => {
+      repository.findById.mockResolvedValue(closedRequest);
+      residentsService.getByUserId.mockResolvedValue(resident);
+      await expect(
+        service.submitFeedback(request.id, { rating }, residentUser),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects non-closed, cancelled, unowned, and duplicate feedback', async () => {
+      residentsService.getByUserId.mockResolvedValue(resident);
+      repository.findById.mockResolvedValue(request);
+      await expect(
+        service.submitFeedback(request.id, { rating: 4 }, residentUser),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      repository.findById.mockResolvedValue({
+        ...request,
+        status: MaintenanceStatus.CANCELLED,
+      });
+      await expect(
+        service.submitFeedback(request.id, { rating: 4 }, residentUser),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      repository.findById.mockResolvedValue({
+        ...closedRequest,
+        residentId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+      await expect(
+        service.submitFeedback(request.id, { rating: 4 }, residentUser),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      repository.findById.mockResolvedValue(closedRequest);
+      feedbackRepository.findByRequestId.mockResolvedValue(feedback);
+      await expect(
+        service.submitFeedback(request.id, { rating: 4 }, residentUser),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('allows admin, owner and previously assigned technician to read', async () => {
+      repository.findById.mockResolvedValue(closedRequest);
+      feedbackRepository.findByRequestId.mockResolvedValue(feedback);
+      await expect(service.getFeedback(request.id, admin)).resolves.toEqual(
+        feedback,
+      );
+      await expect(
+        service.getFeedback(request.id, residentUser),
+      ).resolves.toEqual(feedback);
+      assignmentsRepository.wasAssignedToUser.mockResolvedValue(true);
+      await expect(
+        service.getFeedback(request.id, technicianUser),
+      ).resolves.toEqual(feedback);
+    });
+
+    it('denies unrelated residents and technicians', async () => {
+      repository.findById.mockResolvedValue(closedRequest);
+      await expect(
+        service.getFeedback(request.id, {
+          ...residentUser,
+          id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      assignmentsRepository.wasAssignedToUser.mockResolvedValue(false);
+      await expect(
+        service.getFeedback(request.id, technicianUser),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });

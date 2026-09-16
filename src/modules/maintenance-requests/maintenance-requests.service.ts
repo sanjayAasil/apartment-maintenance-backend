@@ -18,12 +18,14 @@ import { TechniciansService } from '../technicians/technicians.service.js';
 import type { TechnicianWithRelations } from '../technicians/technicians.types.js';
 import type { PublicUser } from '../users/users.types.js';
 import type { CreateMaintenanceRequestDto } from './dto/create-maintenance-request.dto.js';
+import type { CreateFeedbackDto } from './dto/create-feedback.dto.js';
 import type { CreateMaintenanceWorkNoteDto } from './dto/create-maintenance-work-note.dto.js';
 import type { ListMaintenanceRequestsQueryDto } from './dto/list-maintenance-requests-query.dto.js';
 import type { UpdateMaintenanceWorkNoteDto } from './dto/update-maintenance-work-note.dto.js';
 import type { UpdateMaintenanceRequestDto } from './dto/update-maintenance-request.dto.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
 import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
+import { MaintenanceFeedbackRepository } from './maintenance-feedback.repository.js';
 import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import {
@@ -36,6 +38,7 @@ import type {
   MaintenanceCommentWithAuthor,
   MaintenanceHistoryEvent,
   MaintenanceHistoryWithActor,
+  MaintenanceFeedbackWithResident,
   MaintenanceRequestCost,
   MaintenanceRequestPartWithPart,
   MaintenanceWorkNoteWithTechnician,
@@ -67,6 +70,7 @@ export class MaintenanceRequestsService {
     private readonly assignmentsRepository: MaintenanceAssignmentsRepository,
     private readonly commentsRepository: MaintenanceCommentsRepository,
     private readonly historyRepository: MaintenanceHistoryRepository,
+    private readonly feedbackRepository: MaintenanceFeedbackRepository,
     private readonly workRepository: MaintenanceWorkRepository,
     private readonly partsService: PartsService,
   ) {}
@@ -439,6 +443,90 @@ export class MaintenanceRequestsService {
     const request = await this.findOrThrow(id);
     this.assertCanAccess(request, user);
     return this.historyRepository.findByRequestId(id);
+  }
+
+  async submitFeedback(
+    id: string,
+    input: CreateFeedbackDto,
+    user: PublicUser,
+  ): Promise<MaintenanceFeedbackWithResident> {
+    if (user.role !== UserRole.RESIDENT) {
+      throw new ForbiddenException('Only residents can submit feedback');
+    }
+    const request = await this.findOrThrow(id);
+    const resident = await this.residentsService.getByUserId(user.id);
+    if (request.residentId !== resident.id) {
+      throw new ForbiddenException(
+        'You can only submit feedback for your own maintenance request',
+      );
+    }
+    if (request.status !== MaintenanceStatus.CLOSED) {
+      throw new BadRequestException(
+        'Feedback can only be submitted after the request is closed',
+      );
+    }
+    if (
+      !Number.isInteger(input.rating) ||
+      input.rating < 1 ||
+      input.rating > 5
+    ) {
+      throw new BadRequestException('Rating must be an integer from 1 to 5');
+    }
+    if (await this.feedbackRepository.findByRequestId(id)) {
+      throw new ConflictException('Feedback has already been submitted');
+    }
+    const comment = input.comment?.trim() || null;
+    if (comment !== null && comment.length > 1000) {
+      throw new BadRequestException(
+        'Feedback comment must not exceed 1000 characters',
+      );
+    }
+    try {
+      return await this.feedbackRepository.create(
+        id,
+        resident.id,
+        user.id,
+        input.rating,
+        comment,
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Feedback has already been submitted');
+      }
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'Related maintenance request or resident no longer exists',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getFeedback(
+    id: string,
+    user: PublicUser,
+  ): Promise<MaintenanceFeedbackWithResident | null> {
+    const request = await this.findOrThrow(id);
+    if (user.role === UserRole.RESIDENT) {
+      if (request.resident.userId !== user.id) {
+        throw new ForbiddenException(
+          'You cannot access feedback for this maintenance request',
+        );
+      }
+    } else if (user.role === UserRole.TECHNICIAN) {
+      if (!(await this.assignmentsRepository.wasAssignedToUser(id, user.id))) {
+        throw new ForbiddenException(
+          'You can only access feedback for requests assigned to you',
+        );
+      }
+    }
+    return this.feedbackRepository.findByRequestId(id);
   }
 
   async getWorkNote(

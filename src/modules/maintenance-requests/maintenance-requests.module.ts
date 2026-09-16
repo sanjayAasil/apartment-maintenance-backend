@@ -6,6 +6,7 @@ import { TechniciansModule } from '../technicians/technicians.module.js';
 import { MaintenanceAssignmentsRepository } from './maintenance-assignments.repository.js';
 import { MaintenanceCommentsRepository } from './maintenance-comments.repository.js';
 import { MaintenanceHistoryRepository } from './maintenance-history.repository.js';
+import { MaintenanceFeedbackRepository } from './maintenance-feedback.repository.js';
 import { MaintenanceRequestsController } from './maintenance-requests.controller.js';
 import { MaintenanceRequestsRepository } from './maintenance-requests.repository.js';
 import { MaintenanceRequestsService } from './maintenance-requests.service.js';
@@ -25,6 +26,7 @@ import { MaintenanceWorkRepository } from './maintenance-work.repository.js';
     MaintenanceAssignmentsRepository,
     MaintenanceCommentsRepository,
     MaintenanceHistoryRepository,
+    MaintenanceFeedbackRepository,
     MaintenanceWorkRepository,
   ],
   exports: [MaintenanceRequestsService],

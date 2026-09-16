@@ -40,6 +40,38 @@ npm run start:dev
 
 Swagger UI is available at `http://localhost:3000/api/docs`.
 
+## Public development URL with ngrok
+
+Install and authenticate the ngrok agent once:
+
+```bash
+ngrok config add-authtoken <your-ngrok-authtoken>
+```
+
+Run the API and tunnel in separate terminals:
+
+```bash
+npm run start:dev
+```
+
+```bash
+npm run tunnel
+```
+
+The tunnel forwards to `PORT` (default `3000`). Its public API URL is the
+HTTPS forwarding URL followed by `/api`, for example
+`https://example.ngrok-free.app/api`. Swagger is available at `/api/docs`.
+
+If your ngrok account has a reserved domain, set `NGROK_URL` before starting:
+
+```bash
+NGROK_URL=https://your-name.ngrok.app npm run tunnel
+```
+
+Never commit an ngrok authtoken. The CLI stores it in the user's ngrok config,
+outside this repository. A public tunnel exposes the development API to the
+internet, so stop it when testing is complete.
+
 ## Authentication
 
 Public registration always creates an active `RESIDENT`. Client requests cannot
