@@ -141,6 +141,8 @@ model MaintenanceRequest {
   @@index([status])
   @@index([priority])
   @@index([createdAt])
+  @@index([resolvedAt])
+  @@index([closedAt])
 }
 
 model Feedback {
@@ -224,6 +226,7 @@ model MaintenanceWorkNote {
   technician           Technician         @relation(fields: [technicianId], references: [id])
 
   @@index([technicianId])
+  @@index([createdAt])
 }
 
 model Part {

@@ -30,6 +30,13 @@ export class PartsRepository {
   async findMany(filters: PartFilters): Promise<PaginatedParts> {
     const where: Prisma.PartWhereInput = {
       isActive: filters.isActive,
+      ...(filters.lowStock === undefined
+        ? {}
+        : {
+            quantity: filters.lowStock
+              ? { lte: this.prisma.part.fields.minimumStock }
+              : { gt: this.prisma.part.fields.minimumStock },
+          }),
       ...(filters.search
         ? {
             OR: [
@@ -44,42 +51,19 @@ export class PartsRepository {
           }
         : {}),
     };
-    if (filters.lowStock === undefined) {
-      const [data, total] = await this.prisma.$transaction([
-        this.prisma.part.findMany({
-          where,
-          select: partSelect,
-          orderBy: { name: 'asc' },
-          skip: (filters.page - 1) * filters.limit,
-          take: filters.limit,
-        }),
-        this.prisma.part.count({ where }),
-      ]);
-      return {
-        data,
-        meta: { page: filters.page, limit: filters.limit, total },
-      };
-    }
-
-    const matching = (
-      await this.prisma.part.findMany({
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.part.findMany({
         where,
         select: partSelect,
         orderBy: { name: 'asc' },
-      })
-    ).filter((part) =>
-      filters.lowStock
-        ? part.quantity <= part.minimumStock
-        : part.quantity > part.minimumStock,
-    );
-    const start = (filters.page - 1) * filters.limit;
+        skip: (filters.page - 1) * filters.limit,
+        take: filters.limit,
+      }),
+      this.prisma.part.count({ where }),
+    ]);
     return {
-      data: matching.slice(start, start + filters.limit),
-      meta: {
-        page: filters.page,
-        limit: filters.limit,
-        total: matching.length,
-      },
+      data,
+      meta: { page: filters.page, limit: filters.limit, total },
     };
   }
 

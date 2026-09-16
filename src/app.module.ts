@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { ApartmentsModule } from './modules/apartments/apartments.module.js';
 import { MaintenanceCategoriesModule } from './modules/maintenance-categories/maintenance-categories.module.js';
 import { MaintenanceRequestsModule } from './modules/maintenance-requests/maintenance-requests.module.js';
@@ -28,6 +29,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
       },
     }),
     PrismaModule,
+    DashboardModule,
     UsersModule,
     AuthModule,
     ApartmentsModule,
